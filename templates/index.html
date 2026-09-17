@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fail2ban & Nginx Sentinel Dashboard — aaPanel 172.16.62.181</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    body { font-family: 'Plus Jakarta Sans', sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen antialiased flex flex-col selection:bg-emerald-100 selection:text-emerald-900">
+
+  <!-- Header -->
+  <header class="border-b border-slate-200 bg-white/95 backdrop-blur-md sticky top-0 z-30 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="h-10 w-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shadow-sm">
+          <i data-lucide="shield-check" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h1 class="text-base font-bold tracking-tight text-slate-900 flex items-center gap-2">
+            Sentinel Monitor
+            <span class="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200 font-mono font-medium">172.16.62.181</span>
+          </h1>
+          <p class="text-xs text-slate-500">aaPanel Fail2ban & Web Access Telemetry</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <div id="status-badge" class="flex items-center space-x-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span id="service-status-text">Active</span>
+        </div>
+        <button onclick="refreshData()" class="p-2 text-slate-600 hover:text-slate-900 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 transition">
+          <i data-lucide="refresh-cw" class="w-4 h-4" id="refresh-icon"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <nav class="flex space-x-1 -mb-px overflow-x-auto">
+        <button onclick="switchTab('tab-overview')" id="nav-tab-overview" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-emerald-600 text-emerald-600 flex items-center gap-2 transition whitespace-nowrap">
+          <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+          Overview & Jails
+        </button>
+        <button onclick="switchTab('tab-access-logs')" id="nav-tab-access-logs" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 flex items-center gap-2 transition whitespace-nowrap">
+          <i data-lucide="globe" class="w-4 h-4 text-emerald-600"></i>
+          Access Log Web (rsudkardinah)
+        </button>
+        <button onclick="switchTab('tab-web-attacks')" id="nav-tab-web-attacks" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 flex items-center gap-2 transition whitespace-nowrap">
+          <i data-lucide="radar" class="w-4 h-4 text-rose-500"></i>
+          Serangan Web
+          <span id="badge-tab-web" class="px-1.5 py-0.2 rounded-full bg-rose-50 text-rose-600 border border-rose-200 text-[10px] font-mono">0</span>
+        </button>
+        <button onclick="switchTab('tab-banned-history')" id="nav-tab-banned-history" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 flex items-center gap-2 transition whitespace-nowrap">
+          <i data-lucide="history" class="w-4 h-4"></i>
+          Riwayat Ban
+          <span id="badge-tab-banned" class="px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-mono">0</span>
+        </button>
+        <button onclick="switchTab('tab-whitelist')" id="nav-tab-whitelist" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 flex items-center gap-2 transition whitespace-nowrap">
+          <i data-lucide="shield" class="w-4 h-4 text-emerald-600"></i>
+          IP Whitelist
+          <span id="badge-tab-whitelist" class="px-1.5 py-0.2 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-mono">0</span>
+        </button>
+        <button onclick="switchTab('tab-logs')" id="nav-tab-logs" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 flex items-center gap-2 transition whitespace-nowrap">
+          <i data-lucide="file-text" class="w-4 h-4"></i>
+          Fail2ban Log
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
+
+    <!-- Top KPI Cards (Always Visible) -->
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500 font-medium">Banned Aktif (UFW/Jails)</p>
+          <p id="stat-banned-current" class="text-2xl font-bold text-rose-600 mt-1 font-mono">0</p>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600">
+          <i data-lucide="shield-ban" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500 font-medium">Total Banned History</p>
+          <p id="stat-banned-total" class="text-2xl font-bold text-amber-600 mt-1 font-mono">0</p>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+          <i data-lucide="history" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500 font-medium">Total Failed Probes</p>
+          <p id="stat-failed-total" class="text-2xl font-bold text-indigo-600 mt-1 font-mono">0</p>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
+          <i data-lucide="zap" class="w-5 h-5"></i>
+        </div>
+      </div>
+
+      <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+        <div>
+          <p class="text-xs text-slate-500 font-medium">Whitelisted IPs</p>
+          <p id="stat-whitelist-count" class="text-2xl font-bold text-emerald-600 mt-1 font-mono">0</p>
+        </div>
+        <div class="w-10 h-10 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+          <i data-lucide="shield" class="w-5 h-5"></i>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 1: OVERVIEW & JAILS -->
+    <div id="tab-overview" class="tab-pane space-y-6">
+      
+      <!-- UFW Active Reject / Block Rules Banner (If Any) -->
+      <div id="ufw-blocks-card" class="p-4 rounded-xl bg-rose-50 border border-rose-200 shadow-xs hidden space-y-2">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-rose-800 uppercase tracking-wider flex items-center gap-1.5">
+            <i data-lucide="alert-octagon" class="w-4 h-4 text-rose-600"></i>
+            Active Firewall Drop/Reject Rules (UFW Level)
+          </h3>
+          <span class="text-[11px] font-mono text-rose-700 font-semibold" id="ufw-blocks-count">1 rule</span>
+        </div>
+        <div id="ufw-blocks-list" class="space-y-1 font-mono text-xs text-rose-900 bg-white/70 p-2.5 rounded-lg border border-rose-200"></div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+              <i data-lucide="lock" class="w-4 h-4 text-emerald-600"></i>
+              Configured Jails & Status
+            </h2>
+            <span class="text-xs text-slate-500 font-mono" id="last-updated">Updating...</span>
+          </div>
+          <div id="jails-container" class="space-y-3"></div>
+        </div>
+
+        <div class="space-y-4">
+          <h2 class="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+            <i data-lucide="terminal" class="w-4 h-4 text-indigo-600"></i>
+            Manual IP Control
+          </h2>
+          <div class="p-5 rounded-xl bg-white border border-slate-200 shadow-sm space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Target IP Address</label>
+              <input type="text" id="action-ip" placeholder="e.g. 172.232.248.56" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono">
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">Target Jail</label>
+              <select id="action-jail" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500">
+                <option value="nginx-scan">nginx-scan (HTTP/HTTPS)</option>
+                <option value="sshd">sshd (Port 22)</option>
+              </select>
+            </div>
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <button onclick="handleBan()" class="px-3 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition">
+                <i data-lucide="slash" class="w-3.5 h-3.5"></i> Ban IP
+              </button>
+              <button onclick="handleUnban()" class="px-3 py-2 bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 transition">
+                <i data-lucide="unlock" class="w-3.5 h-3.5"></i> Unban IP
+              </button>
+            </div>
+            <div id="action-feedback" class="text-xs hidden p-2.5 rounded-lg border font-medium"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: ACCESS LOG NGINX TABLE (NEW!) -->
+    <div id="tab-access-logs" class="tab-pane hidden space-y-4">
+      
+      <!-- Filter Bar -->
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
+          <div class="relative flex-1 md:w-64">
+            <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-2.5"></i>
+            <input type="text" id="filter-access-search" oninput="loadAccessLogs()" placeholder="Cari URL / User-Agent..." class="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-emerald-500 font-mono">
+          </div>
+
+          <div class="flex items-center gap-1.5">
+            <select id="filter-access-status" onchange="loadAccessLogs()" class="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-emerald-500">
+              <option value="">Semua Status HTTP</option>
+              <option value="200">200 OK</option>
+              <option value="404">404 Not Found</option>
+              <option value="403">403 Forbidden</option>
+              <option value="301">301 Redirect</option>
+              <option value="500">500 Server Error</option>
+            </select>
+
+            <select id="filter-access-limit" onchange="loadAccessLogs()" class="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-emerald-500">
+              <option value="50">50 Rows</option>
+              <option value="100" selected>100 Rows</option>
+              <option value="200">200 Rows</option>
+              <option value="500">500 Rows</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Status Summary Badges -->
+        <div id="access-status-pills" class="flex flex-wrap items-center gap-1.5">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Access Logs Table -->
+      <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-3.5">Waktu (WIB)</th>
+                <th class="py-3 px-3.5">Client IP</th>
+                <th class="py-3 px-3.5">Device / Agent</th>
+                <th class="py-3 px-3.5">Request URL / Endpoint</th>
+                <th class="py-3 px-3.5">HTTP Code</th>
+                <th class="py-3 px-3.5">Size</th>
+                <th class="py-3 px-3.5 text-center">Aksi</th>
+              </tr>
+            </thead>
+            <tbody id="access-logs-tbody" class="divide-y divide-slate-100 text-slate-700 font-mono text-[11px]">
+              <tr>
+                <td colspan="7" class="py-6 px-4 text-center text-slate-400 italic">Memuat data real-time access log...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: WEB ATTACKS -->
+    <div id="tab-web-attacks" class="tab-pane hidden space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+          <i data-lucide="radar" class="w-4 h-4 text-rose-600"></i>
+          Deteksi Serangan & Probe Domain (rsudkardinah.tegalkota.go.id)
+        </h2>
+        <span class="text-xs font-semibold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 font-mono" id="web-attacks-count">0 hits</span>
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-4">Waktu (WIB)</th>
+                <th class="py-3 px-4">Attacker IP</th>
+                <th class="py-3 px-4">Kategori Serangan</th>
+                <th class="py-3 px-4">HTTP Method & Path Target</th>
+                <th class="py-3 px-4">Status Nginx</th>
+                <th class="py-3 px-4 text-center">Tindakan</th>
+              </tr>
+            </thead>
+            <tbody id="web-attacks-tbody" class="divide-y divide-slate-100 text-slate-700 font-mono">
+              <tr>
+                <td colspan="6" class="py-4 px-4 text-center text-slate-400 italic">Menganalisis log serangan website...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 4: BANNED HISTORY -->
+    <div id="tab-banned-history" class="tab-pane hidden space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+          <i data-lucide="shield-alert" class="w-4 h-4 text-rose-600"></i>
+          Riwayat IP Berhasil Di-Ban & Di-Unban (Fail2ban Actions)
+        </h2>
+        <span class="text-xs text-slate-500 font-mono" id="banned-total-counter">0 events</span>
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-4">Waktu (Timestamp)</th>
+                <th class="py-3 px-4">Jail</th>
+                <th class="py-3 px-4">Aksi</th>
+                <th class="py-3 px-4">Target IP Address</th>
+                <th class="py-3 px-4 text-center">Aksi Cepat</th>
+              </tr>
+            </thead>
+            <tbody id="banned-table-body" class="divide-y divide-slate-100 text-slate-700 font-mono">
+              <tr>
+                <td colspan="5" class="py-4 px-4 text-center text-slate-400 italic">Memuat data riwayat ban...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: IP WHITELIST -->
+    <div id="tab-whitelist" class="tab-pane hidden space-y-6">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div class="lg:col-span-2 space-y-4">
+          <div class="flex items-center justify-between">
+            <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+              <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
+              Daftar IP / Subnet Whitelist (Kebal Ban)
+            </h2>
+            <span class="text-xs text-slate-500 font-mono" id="whitelist-subtitle">Active rules</span>
+          </div>
+
+          <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+            <p class="text-xs text-slate-500 leading-relaxed">
+              IP di bawah ini dikecualikan secara permanen dari blokir fail2ban (<code class="bg-slate-100 px-1 py-0.5 rounded font-mono text-slate-800">ignoreip</code>) di semua jail (<code class="text-emerald-700 font-mono">nginx-scan</code>, <code class="text-emerald-700 font-mono">sshd</code>).
+            </p>
+            <div id="whitelist-tags-container" class="flex flex-wrap gap-2.5"></div>
+          </div>
+        </div>
+
+        <div class="space-y-4">
+          <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+            <i data-lucide="user-plus" class="w-4 h-4 text-emerald-600"></i>
+            Tambah IP Whitelist
+          </h2>
+          <div class="p-5 rounded-xl bg-white border border-slate-200 shadow-sm space-y-4">
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1">IP Address / CIDR</label>
+              <input type="text" id="whitelist-input-ip" placeholder="e.g. 172.16.61.188 / 10.100.0.0/16" class="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 font-mono">
+            </div>
+            <button onclick="handleAddWhitelist()" class="w-full px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-1.5 shadow-sm transition">
+              <i data-lucide="plus-circle" class="w-4 h-4"></i> Tambahkan ke Whitelist
+            </button>
+            <div id="whitelist-feedback" class="text-xs hidden p-2.5 rounded-lg border font-medium"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 6: LIVE LOG STREAM -->
+    <div id="tab-logs" class="tab-pane hidden space-y-3">
+      <div class="flex items-center justify-between">
+        <h2 class="text-xs font-bold text-slate-600 uppercase tracking-wider flex items-center gap-2">
+          <i data-lucide="file-text" class="w-4 h-4 text-amber-600"></i>
+          Live Fail2ban Stream (/var/log/fail2ban.log)
+        </h2>
+        <span class="text-xs text-slate-500">Auto-refresh 5s</span>
+      </div>
+
+      <div class="bg-white border border-slate-200 rounded-xl p-4 overflow-hidden shadow-sm">
+        <div id="logs-container" class="h-96 overflow-y-auto space-y-1 font-mono text-xs text-slate-700 pr-2"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <footer class="border-t border-slate-200 bg-white py-3.5 text-center text-xs text-slate-500">
+    Maki Ops Sentinel • RSUD Kardinah Infrastructure Security
+  </footer>
+
+  <script>
+    lucide.createIcons();
+
+    let currentActiveTab = 'tab-overview';
+
+    function switchTab(tabId) {
+      currentActiveTab = tabId;
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.add('hidden'));
+      document.querySelectorAll('.tab-btn').forEach(b => {
+        b.classList.remove('border-emerald-600', 'text-emerald-600');
+        b.classList.add('border-transparent', 'text-slate-500');
+      });
+
+      const targetPane = document.getElementById(tabId);
+      if (targetPane) targetPane.classList.remove('hidden');
+
+      const targetBtn = document.getElementById('nav-' + tabId);
+      if (targetBtn) {
+        targetBtn.classList.add('border-emerald-600', 'text-emerald-600');
+        targetBtn.classList.remove('border-transparent', 'text-slate-500');
+      }
+
+      if (tabId === 'tab-access-logs') {
+        loadAccessLogs();
+      }
+    }
+
+    async function loadAccessLogs() {
+      const search = document.getElementById('filter-access-search').value.trim();
+      const status = document.getElementById('filter-access-status').value;
+      const limit = document.getElementById('filter-access-limit').value;
+
+      try {
+        const url = `/api/access-logs?limit=${limit}&status=${status}&search=${encodeURIComponent(search)}`;
+        const res = await fetch(url).then(r => r.json());
+
+        // Render Pills
+        const pillsEl = document.getElementById('access-status-pills');
+        if (res.status_distribution) {
+          pillsEl.innerHTML = Object.entries(res.status_distribution).map(([st, cnt]) => {
+            let color = 'bg-slate-100 text-slate-700 border-slate-200';
+            if (st.startsWith('2')) color = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+            if (st.startsWith('3')) color = 'bg-indigo-50 text-indigo-700 border-indigo-200';
+            if (st.startsWith('4')) color = 'bg-amber-50 text-amber-800 border-amber-200';
+            if (st.startsWith('5')) color = 'bg-rose-50 text-rose-700 border-rose-200';
+            return `<span class="px-2 py-0.5 rounded-md text-[11px] font-mono border font-semibold ${color}">HTTP ${st}: ${cnt}</span>`;
+          }).join('');
+        }
+
+        // Render Table Rows
+        const tbody = document.getElementById('access-logs-tbody');
+        if (!res.logs || res.logs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="py-6 px-4 text-center text-slate-400 italic">Tidak ada traffic log yang cocok dengan filter</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = res.logs.map(l => {
+          let stColor = 'bg-slate-100 text-slate-700';
+          if (l.status.startsWith('2')) stColor = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+          if (l.status.startsWith('3')) stColor = 'bg-indigo-50 text-indigo-700 border border-indigo-200';
+          if (l.status.startsWith('4')) stColor = 'bg-amber-50 text-amber-800 border border-amber-200';
+          if (l.status.startsWith('5')) stColor = 'bg-rose-50 text-rose-700 border border-rose-200';
+
+          return `
+            <tr class="hover:bg-slate-50 transition">
+              <td class="py-2.5 px-3.5 text-slate-600 font-sans text-xs whitespace-nowrap">${l.time}</td>
+              <td class="py-2.5 px-3.5 font-bold text-slate-900 whitespace-nowrap">${l.ip}</td>
+              <td class="py-2.5 px-3.5">
+                <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-sans font-medium">
+                  ${l.device}
+                </span>
+                <p class="text-[10px] text-slate-400 truncate max-w-[140px] font-sans" title="${l.user_agent}">${l.user_agent}</p>
+              </td>
+              <td class="py-2.5 px-3.5 max-w-[320px]">
+                <span class="font-bold text-slate-500">${l.method}</span>
+                <span class="text-slate-800 break-all">${l.path}</span>
+                ${l.referer ? `<p class="text-[10px] text-slate-400 truncate font-sans">Ref: ${l.referer}</p>` : ''}
+              </td>
+              <td class="py-2.5 px-3.5">
+                <span class="px-2 py-0.5 rounded text-[11px] font-bold ${stColor}">${l.status}</span>
+              </td>
+              <td class="py-2.5 px-3.5 text-slate-600 whitespace-nowrap">${l.size}</td>
+              <td class="py-2.5 px-3.5 text-center whitespace-nowrap">
+                <button onclick="quickBanFromAccess('${l.ip}')" class="px-2 py-1 bg-slate-100 hover:bg-rose-600 hover:text-white text-slate-700 rounded text-[10px] font-sans font-semibold transition border border-slate-200 shadow-2xs">
+                  Ban IP
+                </button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+      } catch (e) {
+        console.error("Access log fetch error:", e);
+      }
+    }
+
+    function quickBanFromAccess(ip) {
+      switchTab('tab-overview');
+      document.getElementById('action-ip').value = ip;
+      document.getElementById('action-jail').value = 'nginx-scan';
+      window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+
+    async function refreshData() {
+      const icon = document.getElementById('refresh-icon');
+      icon.classList.add('animate-spin');
+
+      try {
+        const [sumRes, logRes, banHistRes, webAtkRes] = await Promise.all([
+          fetch('/api/summary').then(r => r.json()),
+          fetch('/api/logs?limit=60').then(r => r.json()),
+          fetch('/api/banned-history').then(r => r.json()),
+          fetch('/api/web-attacks').then(r => r.json())
+        ]);
+
+        // Render Stats
+        document.getElementById('stat-banned-current').innerText = sumRes.total_banned_current;
+        document.getElementById('stat-banned-total').innerText = sumRes.total_banned_history;
+        document.getElementById('stat-failed-total').innerText = sumRes.total_failed_history;
+        document.getElementById('stat-whitelist-count').innerText = sumRes.whitelist ? sumRes.whitelist.length : 0;
+        document.getElementById('last-updated').innerText = `Updated: ${sumRes.timestamp}`;
+
+        // Tab Badges
+        document.getElementById('badge-tab-web').innerText = webAtkRes.total;
+        document.getElementById('badge-tab-banned').innerText = banHistRes.total;
+        document.getElementById('badge-tab-whitelist').innerText = sumRes.whitelist ? sumRes.whitelist.length : 0;
+
+        // Render UFW active drop banner
+        const ufwCard = document.getElementById('ufw-blocks-card');
+        const ufwList = document.getElementById('ufw-blocks-list');
+        if (sumRes.ufw_blocks && sumRes.ufw_blocks.length > 0) {
+          ufwCard.classList.remove('hidden');
+          document.getElementById('ufw-blocks-count').innerText = `${sumRes.ufw_blocks.length} active rule(s)`;
+          ufwList.innerHTML = sumRes.ufw_blocks.map(rule => `
+            <div class="flex items-center justify-between py-0.5">
+              <span>${rule}</span>
+              <span class="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 font-sans text-[10px] font-bold">UFW BLOCKED</span>
+            </div>
+          `).join('');
+        } else {
+          ufwCard.classList.add('hidden');
+        }
+
+        // Render Whitelist Tags
+        const wlEl = document.getElementById('whitelist-tags-container');
+        if (sumRes.whitelist && sumRes.whitelist.length > 0) {
+          wlEl.innerHTML = sumRes.whitelist.map(ip => `
+            <div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-mono font-medium shadow-xs">
+              <i data-lucide="shield" class="w-3.5 h-3.5 text-emerald-600"></i>
+              <span>${ip}</span>
+              <button onclick="handleRemoveWhitelist('${ip}')" class="text-emerald-600 hover:text-rose-600 ml-1 transition" title="Hapus dari whitelist">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          `).join('');
+        } else {
+          wlEl.innerHTML = '<span class="text-slate-400 text-xs italic">Belum ada IP whitelist terdaftar</span>';
+        }
+
+        // Render Web Attacks Probes
+        const webTbody = document.getElementById('web-attacks-tbody');
+        document.getElementById('web-attacks-count').innerText = `${webAtkRes.total} suspicious hits`;
+        if (webAtkRes.probes.length === 0) {
+          webTbody.innerHTML = `<tr><td colspan="6" class="py-4 px-4 text-center text-emerald-600 font-sans font-medium">Tidak ada aktivitas probe mencurigakan dalam 1500 request terakhir</td></tr>`;
+        } else {
+          webTbody.innerHTML = webAtkRes.probes.map(p => `
+            <tr class="hover:bg-rose-50/40 transition">
+              <td class="py-2.5 px-4 text-slate-600 font-sans text-xs">${p.date}</td>
+              <td class="py-2.5 px-4 font-bold text-rose-700">${p.ip}</td>
+              <td class="py-2.5 px-4">
+                <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                  ${p.category}
+                </span>
+              </td>
+              <td class="py-2.5 px-4 text-slate-800"><span class="font-semibold text-slate-500">${p.method}</span> <span class="text-rose-600">${p.path}</span></td>
+              <td class="py-2.5 px-4">
+                <span class="px-2 py-0.5 rounded text-[11px] font-bold ${p.status === '404' ? 'bg-slate-100 text-slate-700' : 'bg-rose-100 text-rose-800'}">
+                  ${p.status}
+                </span>
+              </td>
+              <td class="py-2.5 px-4 text-center">
+                <button onclick="banWebAttacker('${p.ip}')" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-sans font-semibold transition shadow-sm">
+                  Ban Attacker
+                </button>
+              </td>
+            </tr>
+          `).join('');
+        }
+
+        // Render Jails
+        const jailsEl = document.getElementById('jails-container');
+        jailsEl.innerHTML = '';
+
+        sumRes.jails.forEach(j => {
+          const card = document.createElement('div');
+          card.className = "p-4 rounded-xl bg-white border border-slate-200 shadow-sm space-y-3";
+          
+          let ipsHtml = '<span class="text-slate-400 text-xs italic">Tidak ada IP yang aktif di-ban di jail ini detik ini</span>';
+          if (j.banned_ips && j.banned_ips.length > 0) {
+            ipsHtml = j.banned_ips.map(ip => `
+              <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-50 text-rose-700 border border-rose-200 text-xs font-mono font-medium">
+                ${ip}
+                <button onclick="quickUnban('${j.name}', '${ip}')" class="hover:text-rose-900" title="Unban">
+                  <i data-lucide="x" class="w-3 h-3"></i>
+                </button>
+              </span>
+            `).join(' ');
+          }
+
+          card.innerHTML = `
+            <div class="flex items-center justify-between">
+              <div class="flex items-center space-x-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
+                <span class="font-bold text-sm text-slate-900 font-mono">${j.name}</span>
+              </div>
+              <div class="flex items-center space-x-3 text-xs">
+                <span class="text-slate-500">Failed Total: <strong class="text-indigo-600 font-mono">${j.failed_total}</strong></span>
+                <span class="text-slate-500">Banned Total: <strong class="text-amber-600 font-mono">${j.banned_total}</strong></span>
+              </div>
+            </div>
+
+            <div>
+              <p class="text-xs font-medium text-slate-500 mb-1.5">Currently Banned IPs (Active in Jail):</p>
+              <div class="flex flex-wrap gap-1.5">
+                ${ipsHtml}
+              </div>
+            </div>
+
+            <div class="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
+              <span>Monitored files: ${j.file_list.length} log targets</span>
+              <span class="font-mono">Fail threshold: ${j.failed_current} active fail</span>
+            </div>
+          `;
+          jailsEl.appendChild(card);
+        });
+
+        // Render Banned History Table
+        const banTbody = document.getElementById('banned-table-body');
+        document.getElementById('banned-total-counter').innerText = `${banHistRes.total} total log actions`;
+        if (banHistRes.history.length === 0) {
+          banTbody.innerHTML = `<tr><td colspan="5" class="py-4 px-4 text-center text-slate-400 italic">Belum ada riwayat ban</td></tr>`;
+        } else {
+          banTbody.innerHTML = banHistRes.history.map(row => {
+            const isBan = row.action.includes('Ban') && !row.action.includes('Unban');
+            const badgeClass = isBan ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-600 border-slate-200';
+            return `
+              <tr class="hover:bg-slate-50/80 transition">
+                <td class="py-2.5 px-4 text-slate-600 font-sans text-xs">${row.time}</td>
+                <td class="py-2.5 px-4 font-bold text-slate-800">${row.jail}</td>
+                <td class="py-2.5 px-4">
+                  <span class="px-2 py-0.5 rounded text-[11px] border font-semibold ${badgeClass}">
+                    ${row.action}
+                  </span>
+                </td>
+                <td class="py-2.5 px-4 font-semibold text-slate-900">${row.ip}</td>
+                <td class="py-2.5 px-4 text-center">
+                  <button onclick="fillAction('${row.ip}', '${row.jail}')" class="text-indigo-600 hover:text-indigo-900 font-sans text-xs font-semibold underline">
+                    Kelola IP
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+
+        // Render Logs
+        const logsEl = document.getElementById('logs-container');
+        logsEl.innerHTML = '';
+        logRes.logs.forEach(l => {
+          const div = document.createElement('div');
+          let color = 'text-slate-600';
+          if (l.level === 'alert') color = 'text-rose-600 font-semibold bg-rose-50/50 px-1 rounded';
+          if (l.level === 'warning') color = 'text-amber-700 bg-amber-50/50 px-1 rounded';
+          if (l.level === 'error') color = 'text-red-600 font-bold bg-red-50/50 px-1 rounded';
+          div.className = `py-1 border-b border-slate-100 ${color}`;
+          div.innerText = l.raw;
+          logsEl.appendChild(div);
+        });
+
+        // If access tab is active, refresh it too
+        if (currentActiveTab === 'tab-access-logs') {
+          loadAccessLogs();
+        }
+
+        lucide.createIcons();
+      } catch (e) {
+        console.error("Fetch error:", e);
+      } finally {
+        icon.classList.remove('animate-spin');
+      }
+    }
+
+    async function handleAddWhitelist() {
+      const ip = document.getElementById('whitelist-input-ip').value.trim();
+      if (!ip) return;
+      const res = await fetch('/api/whitelist/add', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip})
+      }).then(r => r.json());
+      const el = document.getElementById('whitelist-feedback');
+      el.className = `text-xs p-2.5 rounded-lg border ${res.success ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'} block`;
+      el.innerText = res.success ? `IP ${ip} berhasil ditambahkan ke Whitelist!` : `Gagal: ${res.error}`;
+      document.getElementById('whitelist-input-ip').value = '';
+      refreshData();
+      setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    async function handleRemoveWhitelist(ip) {
+      if (!confirm(`Hapus IP ${ip} dari Whitelist?`)) return;
+      await fetch('/api/whitelist/remove', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip})
+      });
+      refreshData();
+    }
+
+    function banWebAttacker(ip) {
+      switchTab('tab-overview');
+      document.getElementById('action-ip').value = ip;
+      document.getElementById('action-jail').value = 'nginx-scan';
+      handleBan();
+    }
+
+    function fillAction(ip, jail) {
+      switchTab('tab-overview');
+      document.getElementById('action-ip').value = ip;
+      if (jail && document.getElementById('action-jail').querySelector(`option[value="${jail}"]`)) {
+        document.getElementById('action-jail').value = jail;
+      }
+      window.scrollTo({top: 0, behavior: 'smooth'});
+    }
+
+    async function handleBan() {
+      const ip = document.getElementById('action-ip').value.trim();
+      const jail = document.getElementById('action-jail').value;
+      if (!ip) return;
+      const res = await fetch('/api/action/ban', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip, jail})
+      }).then(r => r.json());
+      showFeedback(res.success ? `IP ${ip} banned di ${jail}` : `Gagal: ${res.error}`, res.success);
+      refreshData();
+    }
+
+    async function handleUnban() {
+      const ip = document.getElementById('action-ip').value.trim();
+      const jail = document.getElementById('action-jail').value;
+      if (!ip) return;
+      const res = await fetch('/api/action/unban', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip, jail})
+      }).then(r => r.json());
+      showFeedback(res.success ? `IP ${ip} di-unban dari ${jail}` : `Gagal: ${res.error}`, res.success);
+      refreshData();
+    }
+
+    async function quickUnban(jail, ip) {
+      if (!confirm(`Unban IP ${ip} dari jail ${jail}?`)) return;
+      await fetch('/api/action/unban', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ip, jail})
+      });
+      refreshData();
+    }
+
+    function showFeedback(msg, ok) {
+      const el = document.getElementById('action-feedback');
+      el.className = `text-xs p-2.5 rounded-lg border ${ok ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'} block`;
+      el.innerText = msg;
+      setTimeout(() => el.classList.add('hidden'), 4000);
+    }
+
+    refreshData();
+    setInterval(refreshData, 5000);
+  </script>
+</body>
+</html>
