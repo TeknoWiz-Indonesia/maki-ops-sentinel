@@ -11,6 +11,14 @@
   <style>
     body { font-family: 'Plus Jakarta Sans', sans-serif; }
     .font-mono { font-family: 'JetBrains Mono', monospace; }
+    @media print {
+      header, footer, .period-btn, button, #report-period-group, .tab-btn { display: none !important; }
+      body { background: white !important; color: black !important; }
+      main { padding: 0 !important; margin: 0 !important; max-width: 100% !important; }
+      .tab-pane { display: block !important; }
+      .tab-pane:not(#tab-report) { display: none !important; }
+      .shadow-sm, .shadow-xs, .shadow-2xs { box-shadow: none !important; border: 1px solid #cbd5e1 !important; }
+    }
   </style>
 </head>
 <body class="bg-slate-50 text-slate-900 min-h-screen antialiased flex flex-col selection:bg-emerald-100 selection:text-emerald-900">
@@ -48,6 +56,10 @@
         <button onclick="switchTab('tab-overview')" id="nav-tab-overview" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-emerald-600 text-emerald-600 flex items-center gap-2 transition whitespace-nowrap">
           <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
           Overview & Jails
+        </button>
+        <button onclick="switchTab('tab-report')" id="nav-tab-report" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 flex items-center gap-2 transition whitespace-nowrap">
+          <i data-lucide="bar-chart-3" class="w-4 h-4 text-indigo-600"></i>
+          Laporan & Summary
         </button>
         <button onclick="switchTab('tab-access-logs')" id="nav-tab-access-logs" class="tab-btn px-4 py-2.5 text-xs font-semibold border-b-2 border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300 flex items-center gap-2 transition whitespace-nowrap">
           <i data-lucide="globe" class="w-4 h-4 text-emerald-600"></i>
@@ -360,6 +372,190 @@
       </div>
     </div>
 
+    <!-- TAB 7: LAPORAN & RINGKASAN KEAMANAN (REPORT SUMMARY) -->
+    <div id="tab-report" class="tab-pane hidden space-y-6">
+      
+      <!-- Top Report Toolbar -->
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-sm font-bold text-slate-900 flex items-center gap-2">
+            <i data-lucide="bar-chart-3" class="w-5 h-5 text-indigo-600"></i>
+            Laporan Keamanan & Ringkasan Ancaman
+          </h2>
+          <p class="text-xs text-slate-500 mt-0.5" id="rep-subtitle">Analisis tren dan agregasi log ancaman dari database SQLite</p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2.5">
+          <!-- Timeframe buttons -->
+          <div class="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-600" id="report-period-group">
+            <button onclick="changeReportPeriod('today')" id="btn-period-today" class="period-btn px-3 py-1 rounded-md transition hover:text-slate-900">Hari Ini</button>
+            <button onclick="changeReportPeriod('7d')" id="btn-period-7d" class="period-btn px-3 py-1 rounded-md bg-white text-indigo-700 shadow-xs border border-slate-200 font-bold transition">7 Hari</button>
+            <button onclick="changeReportPeriod('30d')" id="btn-period-30d" class="period-btn px-3 py-1 rounded-md transition hover:text-slate-900">30 Hari</button>
+            <button onclick="changeReportPeriod('all')" id="btn-period-all" class="period-btn px-3 py-1 rounded-md transition hover:text-slate-900">Semua</button>
+          </div>
+
+          <!-- Export action buttons -->
+          <div class="flex items-center gap-1.5">
+            <button onclick="exportReportCSV('probes')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-xs transition" title="Export CSV Serangan Web">
+              <i data-lucide="download" class="w-3.5 h-3.5 text-emerald-600"></i>
+              CSV Serangan
+            </button>
+            <button onclick="exportReportCSV('bans')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-xs transition" title="Export CSV Riwayat Ban">
+              <i data-lucide="download" class="w-3.5 h-3.5 text-rose-600"></i>
+              CSV Ban
+            </button>
+            <button onclick="window.print()" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-semibold shadow-xs transition">
+              <i data-lucide="printer" class="w-3.5 h-3.5"></i>
+              Cetak
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Report KPI Summary Cards -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">Deteksi Serangan Web</p>
+            <p id="rep-total-probes" class="text-2xl font-bold text-rose-600 mt-1 font-mono">0</p>
+            <p class="text-[11px] text-slate-400 mt-0.5" id="rep-sub-probes">Periode terpilih</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-rose-50 border border-rose-200 flex items-center justify-center text-rose-600">
+            <i data-lucide="radar" class="w-5 h-5"></i>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">Attacker IP Unik</p>
+            <p id="rep-unique-attackers" class="text-2xl font-bold text-amber-600 mt-1 font-mono">0</p>
+            <p class="text-[11px] text-slate-400 mt-0.5">Threat actors unik</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-600">
+            <i data-lucide="users" class="w-5 h-5"></i>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">Total Tindakan Ban</p>
+            <p id="rep-total-bans" class="text-2xl font-bold text-indigo-600 mt-1 font-mono">0</p>
+            <p class="text-[11px] text-slate-400 mt-0.5" id="rep-sub-bans">Fail2ban Jails</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-600">
+            <i data-lucide="shield-alert" class="w-5 h-5"></i>
+          </div>
+        </div>
+
+        <div class="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex items-center justify-between">
+          <div>
+            <p class="text-xs text-slate-500 font-medium">Vektor Serangan Utama</p>
+            <p id="rep-top-category" class="text-sm font-bold text-slate-900 mt-2 truncate max-w-[140px]">-</p>
+            <p class="text-[11px] text-slate-400 mt-0.5">Kategori tertinggi</p>
+          </div>
+          <div class="w-10 h-10 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600">
+            <i data-lucide="target" class="w-5 h-5"></i>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2 Columns: Category Breakdown & Protection Stats -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        
+        <!-- Left: Distribusi Kategori Serangan -->
+        <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+              <i data-lucide="pie-chart" class="w-4 h-4 text-rose-500"></i>
+              Distribusi Kategori Ancaman Web
+            </h3>
+            <span class="text-xs text-slate-500 font-mono" id="rep-cat-count">0 kategori</span>
+          </div>
+
+          <div id="rep-categories-list" class="space-y-3">
+            <p class="text-xs text-slate-400 italic py-2">Memuat distribusi kategori...</p>
+          </div>
+        </div>
+
+        <!-- Right: Jail & Firewall Protection Distribution -->
+        <div class="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+              <i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i>
+              Aktivitas Proteksi Jail Fail2ban
+            </h3>
+            <span class="text-xs text-slate-500 font-mono" id="rep-jail-count">Active jails</span>
+          </div>
+
+          <div id="rep-jails-list" class="space-y-3">
+            <p class="text-xs text-slate-400 italic py-2">Memuat statistik jail...</p>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Top 10 Attacker IPs -->
+      <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm space-y-0">
+        <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+          <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+            <i data-lucide="flame" class="w-4 h-4 text-amber-500"></i>
+            Top 10 IP Penyerang Paling Agresif
+          </h3>
+          <span class="text-xs text-slate-500 font-mono">Peringkat berdasarkan volume hits</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-4 w-12 text-center">#</th>
+                <th class="py-3 px-4">Attacker IP</th>
+                <th class="py-3 px-4">Frekuensi Hit</th>
+                <th class="py-3 px-4">Kategori Serangan</th>
+                <th class="py-3 px-4">Terakhir Terdeteksi</th>
+                <th class="py-3 px-4 text-center">Tindakan Cepat</th>
+              </tr>
+            </thead>
+            <tbody id="rep-top-attackers-tbody" class="divide-y divide-slate-100 text-slate-700 font-mono">
+              <tr>
+                <td colspan="6" class="py-6 text-center text-slate-400 italic">Memuat data penyerang...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Daily Security Activity Timeline Table -->
+      <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm space-y-0">
+        <div class="px-5 py-4 border-b border-slate-200 flex items-center justify-between">
+          <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+            <i data-lucide="calendar" class="w-4 h-4 text-indigo-600"></i>
+            Rekapitulasi Tren Keamanan Harian (Daily Activity)
+          </h3>
+          <span class="text-xs text-slate-500 font-mono" id="rep-daily-count">Timeline log</span>
+        </div>
+
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-xs">
+            <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider">
+              <tr>
+                <th class="py-3 px-4">Tanggal (WIB)</th>
+                <th class="py-3 px-4">Deteksi Serangan Web</th>
+                <th class="py-3 px-4">Aksi Ban Terjadi</th>
+                <th class="py-3 px-4">Tingkat Ancaman</th>
+              </tr>
+            </thead>
+            <tbody id="rep-daily-tbody" class="divide-y divide-slate-100 text-slate-700 font-mono">
+              <tr>
+                <td colspan="4" class="py-6 text-center text-slate-400 italic">Memuat data timeline...</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
   </main>
 
   <footer class="border-t border-slate-200 bg-white py-3.5 text-center text-xs text-slate-500">
@@ -370,6 +566,7 @@
     lucide.createIcons();
 
     let currentActiveTab = 'tab-overview';
+    let currentReportPeriod = '7d';
 
     function switchTab(tabId) {
       currentActiveTab = tabId;
@@ -390,6 +587,200 @@
 
       if (tabId === 'tab-access-logs') {
         loadAccessLogs();
+      } else if (tabId === 'tab-report') {
+        loadReport();
+      }
+    }
+
+    function changeReportPeriod(period) {
+      currentReportPeriod = period;
+      document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.classList.remove('bg-white', 'text-indigo-700', 'shadow-xs', 'border', 'border-slate-200', 'font-bold');
+        btn.classList.add('hover:text-slate-900');
+      });
+      const activeBtn = document.getElementById('btn-period-' + period);
+      if (activeBtn) {
+        activeBtn.classList.add('bg-white', 'text-indigo-700', 'shadow-xs', 'border', 'border-slate-200', 'font-bold');
+        activeBtn.classList.remove('hover:text-slate-900');
+      }
+      loadReport();
+    }
+
+    function exportReportCSV(type) {
+      window.location.href = `/api/report/export-csv?type=${type}&period=${currentReportPeriod}`;
+    }
+
+    async function loadReport() {
+      try {
+        const res = await fetch(`/api/report?period=${currentReportPeriod}`).then(r => r.json());
+        if (!res || !res.summary) return;
+
+        // Subtitle & Labels
+        document.getElementById('rep-subtitle').innerText = `Ringkasan ancaman keamanan periode: ${res.period_label}`;
+        document.getElementById('rep-sub-probes').innerText = res.period_label;
+        document.getElementById('rep-sub-bans').innerText = `${res.summary.unique_banned_ips || 0} IP unik di-ban`;
+
+        // KPI Numbers
+        document.getElementById('rep-total-probes').innerText = res.summary.total_probes;
+        document.getElementById('rep-unique-attackers').innerText = res.summary.unique_probe_ips;
+        document.getElementById('rep-total-bans').innerText = res.summary.total_bans;
+        document.getElementById('rep-top-category').innerText = res.summary.top_category || '-';
+
+        // 1. Render Categories Breakdown
+        const catContainer = document.getElementById('rep-categories-list');
+        document.getElementById('rep-cat-count').innerText = `${res.categories.length} kategori aktif`;
+        if (res.categories.length === 0) {
+          catContainer.innerHTML = `<p class="text-xs text-slate-400 italic py-2">Tidak ada data serangan pada periode ini</p>`;
+        } else {
+          catContainer.innerHTML = res.categories.map(c => {
+            let barColor = 'bg-indigo-500';
+            let badgeBg = 'bg-indigo-50 text-indigo-700 border-indigo-200';
+            if (c.category.includes('Sensitive')) {
+              barColor = 'bg-rose-500';
+              badgeBg = 'bg-rose-50 text-rose-700 border-rose-200';
+            } else if (c.category.includes('Brute') || c.category.includes('Admin')) {
+              barColor = 'bg-amber-500';
+              badgeBg = 'bg-amber-50 text-amber-800 border-amber-200';
+            } else if (c.category.includes('SQL')) {
+              barColor = 'bg-red-600';
+              badgeBg = 'bg-red-50 text-red-700 border-red-200';
+            } else if (c.category.includes('Traversal')) {
+              barColor = 'bg-purple-500';
+              badgeBg = 'bg-purple-50 text-purple-700 border-purple-200';
+            }
+
+            return `
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="font-semibold text-slate-800 flex items-center gap-1.5">
+                    <span class="w-2 h-2 rounded-full ${barColor}"></span>
+                    ${c.category}
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 rounded text-[11px] font-mono border font-bold ${badgeBg}">${c.count} hits</span>
+                    <span class="font-mono text-slate-500 text-[11px] w-12 text-right">${c.percentage}%</span>
+                  </div>
+                </div>
+                <div class="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                  <div class="${barColor} h-2 rounded-full transition-all duration-500" style="width: ${c.percentage}%"></div>
+                </div>
+              </div>
+            `;
+          }).join('');
+        }
+
+        // 2. Render Jail Stats
+        const jailContainer = document.getElementById('rep-jails-list');
+        document.getElementById('rep-jail-count').innerText = `${res.jails.length} Jails Aktif`;
+        if (res.jails.length === 0) {
+          jailContainer.innerHTML = `<p class="text-xs text-slate-400 italic py-2">Tidak ada data jail pada periode ini</p>`;
+        } else {
+          jailContainer.innerHTML = res.jails.map(j => `
+            <div class="p-3.5 rounded-lg border border-slate-100 bg-slate-50/70 flex items-center justify-between">
+              <div class="space-y-0.5">
+                <p class="text-xs font-bold text-slate-900 font-mono flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                  ${j.jail}
+                </p>
+                <p class="text-[11px] text-slate-500">Jail Filter Proteksi</p>
+              </div>
+              <div class="flex items-center gap-3">
+                <div class="text-right">
+                  <p class="text-xs font-bold text-rose-600 font-mono">${j.bans} Bans</p>
+                  <p class="text-[10px] text-slate-400">Total blokir</p>
+                </div>
+                <div class="text-right">
+                  <p class="text-xs font-bold text-slate-700 font-mono">${j.unbans} Unbans</p>
+                  <p class="text-[10px] text-slate-400">Selesai masa ban</p>
+                </div>
+              </div>
+            </div>
+          `).join('');
+        }
+
+        // 3. Render Top Attackers Table
+        const attackerTbody = document.getElementById('rep-top-attackers-tbody');
+        if (!res.top_attackers || res.top_attackers.length === 0) {
+          attackerTbody.innerHTML = `<tr><td colspan="6" class="py-6 text-center text-slate-400 italic">Tidak ada attacker terdeteksi pada periode ini</td></tr>`;
+        } else {
+          attackerTbody.innerHTML = res.top_attackers.map((a, idx) => {
+            let rankClass = 'bg-slate-100 text-slate-600';
+            if (idx === 0) rankClass = 'bg-amber-100 text-amber-800 font-bold';
+            if (idx === 1) rankClass = 'bg-slate-200 text-slate-800 font-bold';
+            if (idx === 2) rankClass = 'bg-amber-50 text-amber-700 font-semibold';
+
+            const catBadges = (a.categories || '').split(',').map(c => `
+              <span class="inline-block px-1.5 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-sans font-medium mr-1">
+                ${c.trim()}
+              </span>
+            `).join('');
+
+            return `
+              <tr class="hover:bg-slate-50 transition">
+                <td class="py-3 px-4 text-center">
+                  <span class="w-6 h-6 inline-flex items-center justify-center rounded-full text-xs font-mono ${rankClass}">
+                    ${idx + 1}
+                  </span>
+                </td>
+                <td class="py-3 px-4">
+                  <span class="font-bold text-slate-900">${a.ip_address}</span>
+                  ${a.is_whitelisted ? '<span class="ml-1.5 px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-sans font-bold">WHITELIST</span>' : ''}
+                </td>
+                <td class="py-3 px-4">
+                  <span class="px-2.5 py-1 rounded-md bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold">
+                    ${a.hit_count} hits
+                  </span>
+                </td>
+                <td class="py-3 px-4">
+                  ${catBadges || '-'}
+                </td>
+                <td class="py-3 px-4 text-slate-500 font-sans text-xs whitespace-nowrap">
+                  ${a.last_seen}
+                </td>
+                <td class="py-3 px-4 text-center whitespace-nowrap">
+                  <button onclick="banWebAttacker('${a.ip_address}')" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-sans font-semibold transition shadow-xs">
+                    Ban Attacker
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+
+        // 4. Render Daily Activity Timeline
+        const dailyTbody = document.getElementById('rep-daily-tbody');
+        document.getElementById('rep-daily-count').innerText = `${res.daily_trend.length} hari tercatat`;
+        if (!res.daily_trend || res.daily_trend.length === 0) {
+          dailyTbody.innerHTML = `<tr><td colspan="4" class="py-6 text-center text-slate-400 italic">Tidak ada catatan aktivitas harian pada periode ini</td></tr>`;
+        } else {
+          dailyTbody.innerHTML = res.daily_trend.map(d => {
+            let threatBadge = '<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 font-sans">Rendah / Normal</span>';
+            if (d.probes > 20 || d.bans > 3) {
+              threatBadge = '<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200 font-sans">Tinggi (High)</span>';
+            } else if (d.probes > 0 || d.bans > 0) {
+              threatBadge = '<span class="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-800 border border-amber-200 font-sans">Sedang (Medium)</span>';
+            }
+
+            return `
+              <tr class="hover:bg-slate-50 transition">
+                <td class="py-3 px-4 font-bold text-slate-800">${d.date}</td>
+                <td class="py-3 px-4">
+                  <span class="font-bold ${d.probes > 0 ? 'text-rose-600' : 'text-slate-400'}">${d.probes} deteksi</span>
+                </td>
+                <td class="py-3 px-4">
+                  <span class="font-bold ${d.bans > 0 ? 'text-indigo-600' : 'text-slate-400'}">${d.bans} bans</span>
+                </td>
+                <td class="py-3 px-4">
+                  ${threatBadge}
+                </td>
+              </tr>
+            `;
+          }).join('');
+        }
+
+        lucide.createIcons();
+      } catch (e) {
+        console.error("Report fetch error:", e);
       }
     }
 
@@ -648,6 +1039,8 @@
         // If access tab is active, refresh it too
         if (currentActiveTab === 'tab-access-logs') {
           loadAccessLogs();
+        } else if (currentActiveTab === 'tab-report') {
+          loadReport();
         }
 
         lucide.createIcons();

@@ -44,6 +44,8 @@ Maki Ops Sentinel is a lightweight, real-time security operations dashboard depl
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/summary` | Service status, jail details, UFW blocks, whitelist & DB stats |
+| `GET` | `/api/report` | Aggregated security summary report (supports `period=today\|7d\|30d\|all`) |
+| `GET` | `/api/report/export-csv` | Downloadable CSV report (supports `type=probes\|bans\|attackers` & `period`) |
 | `GET` | `/api/banned-history` | Ban/unban event history from SQLite (supports `search` & `jail` filter) |
 | `GET` | `/api/web-attacks` | Detected malicious web probes from SQLite (supports `category` & `search`) |
 | `GET` | `/api/audit-logs` | Administrative audit trail of dashboard actions |

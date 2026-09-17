@@ -8,7 +8,9 @@ import time
 import threading
 from datetime import datetime, timedelta
 from collections import Counter
-from flask import Flask, render_template, jsonify, request
+import io
+import csv
+from flask import Flask, render_template, jsonify, request, Response
 
 app = Flask(__name__)
 
@@ -551,6 +553,225 @@ def api_audit_logs():
         return jsonify({"audit_logs": logs, "total": len(logs)})
     except Exception as e:
         return jsonify({"audit_logs": [], "error": str(e)})
+
+def get_report_data(period="7d"):
+    """Mengagregasikan ringkasan statistik keamanan berdasarkan periode."""
+    now = datetime.now()
+    if period == "today":
+        cutoff = now.strftime("%Y-%m-%d 00:00:00")
+        period_label = f"Hari Ini ({now.strftime('%d %b %Y')})"
+    elif period == "30d":
+        cutoff = (now - timedelta(days=30)).strftime("%Y-%m-%d 00:00:00")
+        period_label = "30 Hari Terakhir"
+    elif period == "all":
+        cutoff = "1970-01-01 00:00:00"
+        period_label = "Semua Waktu"
+    else:  # default 7d
+        cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
+        period_label = "7 Hari Terakhir"
+
+    conn = get_db()
+    cur = conn.cursor()
+
+    # 1. Probes summary
+    cur.execute("""
+        SELECT 
+            COUNT(*) as total_probes,
+            COUNT(DISTINCT ip_address) as unique_ips
+        FROM attack_probes
+        WHERE probe_time >= ?
+    """, (cutoff,))
+    probe_row = cur.fetchone()
+    total_probes = probe_row["total_probes"] if probe_row else 0
+    unique_probe_ips = probe_row["unique_ips"] if probe_row else 0
+
+    # 2. Ban summary
+    cur.execute("""
+        SELECT 
+            COUNT(CASE WHEN action IN ('Ban', 'Manual Ban') THEN 1 END) as total_bans,
+            COUNT(CASE WHEN action IN ('Unban', 'Manual Unban') THEN 1 END) as total_unbans,
+            COUNT(DISTINCT ip_address) as unique_banned_ips
+        FROM ban_events
+        WHERE event_time >= ?
+    """, (cutoff,))
+    ban_row = cur.fetchone()
+    total_bans = ban_row["total_bans"] if ban_row else 0
+    total_unbans = ban_row["total_unbans"] if ban_row else 0
+    unique_banned_ips = ban_row["unique_banned_ips"] if ban_row else 0
+
+    # 3. Categories breakdown
+    cur.execute("""
+        SELECT category, COUNT(*) as count
+        FROM attack_probes
+        WHERE probe_time >= ?
+        GROUP BY category
+        ORDER BY count DESC
+    """, (cutoff,))
+    cat_rows = cur.fetchall()
+    categories = []
+    top_cat = "-"
+    if cat_rows:
+        top_cat = cat_rows[0]["category"]
+        for r in cat_rows:
+            pct = round((r["count"] / total_probes * 100), 1) if total_probes > 0 else 0
+            categories.append({"category": r["category"], "count": r["count"], "percentage": pct})
+
+    # 4. Top Attackers
+    cur.execute("""
+        SELECT 
+            ip_address,
+            COUNT(*) as hit_count,
+            MAX(probe_time) as last_seen,
+            GROUP_CONCAT(DISTINCT category) as categories
+        FROM attack_probes
+        WHERE probe_time >= ?
+        GROUP BY ip_address
+        ORDER BY hit_count DESC
+        LIMIT 10
+    """, (cutoff,))
+    top_attackers = [dict(r) for r in cur.fetchall()]
+
+    # Check whitelist status for top attackers
+    wl = get_whitelisted_ips()
+    for a in top_attackers:
+        a["is_whitelisted"] = any(w.split("/")[0] in a["ip_address"] for w in wl)
+
+    # 5. Daily Trend
+    cur.execute("""
+        SELECT substr(probe_time, 1, 10) as day, COUNT(*) as probes
+        FROM attack_probes
+        WHERE probe_time >= ?
+        GROUP BY day
+    """, (cutoff,))
+    probe_days = {r["day"]: r["probes"] for r in cur.fetchall()}
+
+    cur.execute("""
+        SELECT substr(event_time, 1, 10) as day, COUNT(*) as bans
+        FROM ban_events
+        WHERE event_time >= ? AND action IN ('Ban', 'Manual Ban')
+        GROUP BY day
+    """, (cutoff,))
+    ban_days = {r["day"]: r["bans"] for r in cur.fetchall()}
+
+    all_days = sorted(list(set(list(probe_days.keys()) + list(ban_days.keys()))), reverse=True)
+    daily_trend = []
+    for d in all_days:
+        daily_trend.append({
+            "date": d,
+            "probes": probe_days.get(d, 0),
+            "bans": ban_days.get(d, 0)
+        })
+
+    # 6. Jail breakdown
+    cur.execute("""
+        SELECT jail, 
+               COUNT(CASE WHEN action IN ('Ban', 'Manual Ban') THEN 1 END) as bans,
+               COUNT(CASE WHEN action IN ('Unban', 'Manual Unban') THEN 1 END) as unbans
+        FROM ban_events
+        WHERE event_time >= ?
+        GROUP BY jail
+    """, (cutoff,))
+    jails = [dict(r) for r in cur.fetchall()]
+
+    conn.close()
+
+    return {
+        "period": period,
+        "period_label": period_label,
+        "summary": {
+            "total_probes": total_probes,
+            "unique_probe_ips": unique_probe_ips,
+            "total_bans": total_bans,
+            "total_unbans": total_unbans,
+            "unique_banned_ips": unique_banned_ips,
+            "top_category": top_cat
+        },
+        "categories": categories,
+        "top_attackers": top_attackers,
+        "daily_trend": daily_trend,
+        "jails": jails,
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+@app.route("/api/report")
+def api_report():
+    """Mengambil data laporan summary agregat untuk dashboard report view."""
+    period = request.args.get("period", "7d").strip().lower()
+    if period not in ["today", "7d", "30d", "all"]:
+        period = "7d"
+    try:
+        data = get_report_data(period)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e), "summary": {}}), 500
+
+@app.route("/api/report/export-csv")
+def api_report_export_csv():
+    """Mengekspor data laporan ke format CSV."""
+    export_type = request.args.get("type", "probes").strip().lower()
+    period = request.args.get("period", "7d").strip().lower()
+    
+    now = datetime.now()
+    if period == "today":
+        cutoff = now.strftime("%Y-%m-%d 00:00:00")
+    elif period == "30d":
+        cutoff = (now - timedelta(days=30)).strftime("%Y-%m-%d 00:00:00")
+    elif period == "all":
+        cutoff = "1970-01-01 00:00:00"
+    else:
+        cutoff = (now - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
+
+    si = io.StringIO()
+    writer = csv.writer(si)
+    filename = f"sentinel_{export_type}_{period}_{now.strftime('%Y%m%d_%H%M%S')}.csv"
+
+    try:
+        conn = get_db()
+        cur = conn.cursor()
+
+        if export_type == "bans":
+            writer.writerow(["ID", "Timestamp (WIB)", "Jail", "Action", "IP Address", "Raw Log"])
+            rows = cur.execute("""
+                SELECT id, event_time, jail, action, ip_address, raw_log 
+                FROM ban_events 
+                WHERE event_time >= ? 
+                ORDER BY id DESC
+            """, (cutoff,)).fetchall()
+            for r in rows:
+                writer.writerow([r["id"], r["event_time"], r["jail"], r["action"], r["ip_address"], r["raw_log"]])
+
+        elif export_type == "attackers":
+            writer.writerow(["Rank", "Attacker IP", "Total Hit Probes", "Categories", "Last Seen"])
+            rows = cur.execute("""
+                SELECT ip_address, COUNT(*) as hit_count, GROUP_CONCAT(DISTINCT category) as categories, MAX(probe_time) as last_seen
+                FROM attack_probes 
+                WHERE probe_time >= ? 
+                GROUP BY ip_address 
+                ORDER BY hit_count DESC
+            """, (cutoff,)).fetchall()
+            for idx, r in enumerate(rows, start=1):
+                writer.writerow([idx, r["ip_address"], r["hit_count"], r["categories"], r["last_seen"]])
+
+        else:  # probes default
+            writer.writerow(["ID", "Probe Time (WIB)", "Attacker IP", "HTTP Method", "Path Target", "Status Code", "Attack Category"])
+            rows = cur.execute("""
+                SELECT id, probe_time, ip_address, method, path, status_code, category 
+                FROM attack_probes 
+                WHERE probe_time >= ? 
+                ORDER BY id DESC
+            """, (cutoff,)).fetchall()
+            for r in rows:
+                writer.writerow([r["id"], r["probe_time"], r["ip_address"], r["method"], r["path"], r["status_code"], r["category"]])
+
+        conn.close()
+        output = si.getvalue()
+        return Response(
+            output,
+            mimetype="text/csv",
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/whitelist/add", methods=["POST"])
 def api_whitelist_add():
