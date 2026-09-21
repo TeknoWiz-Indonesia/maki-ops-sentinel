@@ -195,6 +195,29 @@
     <!-- TAB 2: ACCESS LOG NGINX & VISITOR ANALYTICS -->
     <div id="tab-access-logs" class="tab-pane hidden space-y-4">
       
+      <!-- Period Selector Header -->
+      <div class="bg-white border border-slate-200 rounded-xl p-3.5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+        <div class="flex items-center gap-2.5">
+          <div class="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center border border-emerald-100">
+            <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
+          </div>
+          <div>
+            <h2 class="text-xs font-bold text-slate-800 uppercase tracking-wider">Statistik Pengunjung & Access Log Web</h2>
+            <p class="text-[11px] text-slate-500">Filter Analisis: <span class="font-semibold text-emerald-700" id="access-period-label-text">Hari Ini</span> (rsudkardinah.tegalkota.go.id)</p>
+          </div>
+        </div>
+
+        <!-- Period Filter Buttons -->
+        <div class="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+          <button onclick="setAccessPeriod('today')" id="access-period-today" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md bg-white text-slate-800 shadow-xs transition">Hari Ini</button>
+          <button onclick="setAccessPeriod('7d')" id="access-period-7d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">7 Hari</button>
+          <button onclick="setAccessPeriod('30d')" id="access-period-30d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">1 Bulan</button>
+          <button onclick="setAccessPeriod('90d')" id="access-period-90d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">3 Bulan</button>
+          <button onclick="setAccessPeriod('180d')" id="access-period-180d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">6 Bulan</button>
+          <button onclick="setAccessPeriod('365d')" id="access-period-365d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">1 Tahun</button>
+        </div>
+      </div>
+
       <!-- Visitor Analytics KPI Summary -->
       <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
         <!-- Human Visitors Today -->
@@ -888,14 +911,45 @@
       }
     }
 
+    let currentAccessPeriod = 'today';
+
+    function setAccessPeriod(period) {
+      currentAccessPeriod = period;
+      document.querySelectorAll('.access-period-btn').forEach(btn => {
+        btn.classList.remove('bg-white', 'text-slate-800', 'shadow-xs');
+        btn.classList.add('text-slate-600');
+      });
+      const activeBtn = document.getElementById(`access-period-${period}`);
+      if (activeBtn) {
+        activeBtn.classList.add('bg-white', 'text-slate-800', 'shadow-xs');
+        activeBtn.classList.remove('text-slate-600');
+      }
+      loadAccessLogs();
+    }
+
     async function loadAccessLogs() {
       const search = document.getElementById('filter-access-search').value.trim();
       const status = document.getElementById('filter-access-status').value;
       const limit = document.getElementById('filter-access-limit').value;
 
+      const citiesListEl = document.getElementById('access-top-cities-list');
+      const urlsListEl = document.getElementById('access-top-urls-list');
+      if (citiesListEl) {
+        citiesListEl.innerHTML = '<div class="py-4 text-center text-slate-400 italic flex items-center justify-center gap-2"><span class="animate-pulse">⏳ Menganalisis log...</span></div>';
+      }
+      if (urlsListEl) {
+        urlsListEl.innerHTML = '<div class="py-4 text-center text-slate-400 italic flex items-center justify-center gap-2"><span class="animate-pulse">⏳ Menganalisis log...</span></div>';
+      }
+
       try {
-        const url = `/api/access-logs?limit=${limit}&status=${status}&search=${encodeURIComponent(search)}`;
+        const url = `/api/access-logs?limit=${limit}&status=${status}&search=${encodeURIComponent(search)}&period=${currentAccessPeriod}`;
         const res = await fetch(url).then(r => r.json());
+
+        // Update Period Label
+        const labelEl = document.getElementById('access-period-label-text');
+        if (labelEl && res.period_label) {
+          labelEl.textContent = res.period_label;
+        }
 
         // 1. Render Visitor Analytics KPIs
         if (res.analytics) {

@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from collections import Counter
 import io
 import csv
+import glob
+import gzip
 import urllib.request
 from flask import Flask, render_template, jsonify, request, Response
 
@@ -465,109 +467,173 @@ def api_summary():
 
 @app.route("/api/access-logs")
 def api_access_logs():
-    """Live web access log view & Visitor Analytics (Realtime tail + GeoIP)."""
+    """Live web access log view & Visitor Analytics dengan filter periode (today/7d/30d/90d/180d/365d) - Optimized."""
     limit = int(request.args.get("limit", 100))
     status_filter = request.args.get("status", "")
     ip_filter = request.args.get("ip", "").strip()
     search_filter = request.args.get("search", "").strip().lower()
+    period = request.args.get("period", "today").strip().lower()
     
-    # Read last 1500 lines for rich analytics and responsive tail
-    raw_logs = run_cmd("tail -n 1500 /www/wwwlogs/rsudkardinah.tegalkota.go.id.log 2>/dev/null")
-    parsed = []
+    # Calculate cutoff datetime & set of allowed date strings for O(1) matching
+    now = datetime.now()
+    if period == "7d":
+        days = 7
+        period_label = "7 Hari Terakhir"
+    elif period in ("30d", "1m", "month"):
+        days = 30
+        period = "30d"
+        period_label = "1 Bulan Terakhir"
+    elif period in ("90d", "3m"):
+        days = 90
+        period = "90d"
+        period_label = "3 Bulan Terakhir"
+    elif period in ("180d", "6m"):
+        days = 180
+        period = "180d"
+        period_label = "6 Bulan Terakhir"
+    elif period in ("365d", "1y", "year"):
+        days = 365
+        period = "365d"
+        period_label = "1 Tahun Terakhir"
+    else:
+        days = 0
+        period = "today"
+        period_label = "Hari Ini"
+
+    cutoff = now - timedelta(days=days) if days > 0 else now.replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # Nginx Combined Log Regex & Bot Classifier
+    allowed_date_prefixes = set()
+    cur = cutoff
+    while cur <= now:
+        allowed_date_prefixes.add(cur.strftime("%d/%b/%Y"))
+        cur += timedelta(days=1)
+
+    # Regex definitions & fast string lookups
     pat = re.compile(r'^([0-9a-fA-F\.:]+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+([^\s]+)\s+([^"]*)"\s+([0-9]{3})\s+([0-9]+)\s+"([^"]*)"\s+"([^"]*)"')
     bot_re = re.compile(r'bot|spider|crawl|curl|python|wget|go-http|scanner|scan|nikto|sqlmap|censys|shodan|zgrab|nmap|ahrefs|semrush|bingbot|googlebot|yandex|bytespider|facebookexternalhit|headless|urllib|httpclient|postman', re.I)
+    static_exts = ('.jpg', '.jpeg', '.png', '.gif', '.css', '.js', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.svg', '.ico', '.webp', '.map')
 
-    today_str = datetime.now().strftime("%d/%b/%Y")
-
+    from collections import deque
+    parsed_deque = deque(maxlen=max(limit * 2, 200))
+    
     status_counts = Counter()
     ip_counts = Counter()
     url_counts = Counter()
     city_counts = Counter()
-    human_ips_today = set()
-    human_hits_today = 0
-    bot_hits_today = 0
+    human_ips = set()
+    human_hits = 0
+    bot_hits = 0
     
-    # Unique human IPs for batch GeoIP resolution
+    # Store unique human IPs for GeoIP
     detected_human_ips = []
 
-    for line in raw_logs.splitlines():
+    def process_line(line):
+        nonlocal human_hits, bot_hits
         if not line.strip():
-            continue
+            return
         m = pat.search(line)
-        if m:
-            ip, user, date, method, path, proto, status, size, ref, ua = m.groups()
-            
-            is_internal = is_private_ip(ip)
-            is_bot = bool(bot_re.search(ua)) or ua in ("-", "")
-            is_today = date.startswith(today_str)
-            
-            if is_today and not is_internal:
-                if is_bot:
-                    bot_hits_today += 1
-                else:
-                    human_hits_today += 1
-                    human_ips_today.add(ip)
+        if not m:
+            return
+        ip, user, date_str, method, path, proto, status, size, ref, ua = m.groups()
+        
+        # O(1) Date Matching via set
+        if date_str[:11] not in allowed_date_prefixes:
+            return
 
-            if not is_bot and not is_internal:
+        is_internal = is_private_ip(ip)
+        is_bot = bool(bot_re.search(ua)) or ua in ("-", "")
+
+        if not is_internal:
+            if is_bot:
+                bot_hits += 1
+            else:
+                human_hits += 1
+                human_ips.add(ip)
                 detected_human_ips.append(ip)
-                # Count clean content page URLs (filter common static images/fonts/assets)
-                static_exts = ['.jpg', '.jpeg', '.png', '.gif', '.css', '.js', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.svg', '.ico', '.webp', '.map']
-                is_static = any(path.lower().endswith(ext) or ext + "?" in path.lower() for ext in static_exts)
-                if not is_static:
-                    clean_path = path.split("?")[0]
+                
+                # Check static asset extension
+                clean_path = path.split("?")[0]
+                if not clean_path.lower().endswith(static_exts):
                     url_counts[clean_path] += 1
 
-            sz_int = int(size) if size.isdigit() else 0
-            if sz_int > 1048576:
-                size_hr = f"{sz_int/1048576:.1f} MB"
-            elif sz_int > 1024:
-                size_hr = f"{sz_int/1024:.1f} KB"
-            else:
-                size_hr = f"{sz_int} B"
+        status_counts[status] += 1
+        if not is_internal and not is_bot:
+            ip_counts[ip] += 1
 
-            device = "Desktop"
-            if is_bot:
-                device = "Bot / Script"
-            elif "Android" in ua:
-                device = "Android"
-            elif "iPhone" in ua or "iPad" in ua:
-                device = "iOS"
-            elif "Windows" in ua:
-                device = "Windows"
-            elif "Mac" in ua:
-                device = "macOS"
-            elif "Linux" in ua:
-                device = "Linux"
+        if status_filter and status != status_filter:
+            return
+        if ip_filter and ip_filter not in ip:
+            return
+        if search_filter and (search_filter not in path.lower() and search_filter not in ua.lower() and search_filter not in ip.lower()):
+            return
 
-            status_counts[status] += 1
-            if not is_internal and not is_bot:
-                ip_counts[ip] += 1
+        sz_int = int(size) if size.isdigit() else 0
+        if sz_int > 1048576:
+            size_hr = f"{sz_int/1048576:.1f} MB"
+        elif sz_int > 1024:
+            size_hr = f"{sz_int/1024:.1f} KB"
+        else:
+            size_hr = f"{sz_int} B"
 
-            if status_filter and status != status_filter:
-                continue
-            if ip_filter and ip_filter not in ip:
-                continue
-            if search_filter and (search_filter not in path.lower() and search_filter not in ua.lower() and search_filter not in ip.lower()):
-                continue
+        device = "Desktop"
+        if is_bot:
+            device = "Bot / Script"
+        elif "Android" in ua:
+            device = "Android"
+        elif "iPhone" in ua or "iPad" in ua:
+            device = "iOS"
+        elif "Windows" in ua:
+            device = "Windows"
+        elif "Mac" in ua:
+            device = "macOS"
+        elif "Linux" in ua:
+            device = "Linux"
 
-            parsed.append({
-                "ip": ip,
-                "time": date,
-                "method": method,
-                "path": path,
-                "proto": proto,
-                "status": status,
-                "size": size_hr,
-                "bytes": sz_int,
-                "referer": ref if ref != "-" else "",
-                "user_agent": ua,
-                "device": device
-            })
+        parsed_deque.append({
+            "ip": ip,
+            "time": date_str,
+            "method": method,
+            "path": path,
+            "proto": proto,
+            "status": status,
+            "size": size_hr,
+            "bytes": sz_int,
+            "referer": ref if ref != "-" else "",
+            "user_agent": ua,
+            "device": device
+        })
 
-    # Resolve GeoIP for human IPs (up to 80 unique)
-    unique_human_ips = list(set(detected_human_ips))[:80]
+    # 1. Historical GZ logs
+    if period != "today":
+        gz_files = sorted(glob.glob("/www/wwwlogs/history_backups/rsudkardinah.tegalkota.go.id/*_access_*.log.gz"))
+        for f in gz_files:
+            m = re.search(r'_access_(\d{4}-\d{2}-\d{2})_', f)
+            if m:
+                try:
+                    f_date = datetime.strptime(m.group(1), "%Y-%m-%d")
+                    if f_date < (cutoff - timedelta(days=1)):
+                        continue
+                except Exception:
+                    pass
+            try:
+                with gzip.open(f, "rt", errors="ignore") as fp:
+                    for line in fp:
+                        process_line(line)
+            except Exception:
+                pass
+
+    # 2. Live log
+    live_log_path = "/www/wwwlogs/rsudkardinah.tegalkota.go.id.log"
+    if os.path.exists(live_log_path):
+        try:
+            with open(live_log_path, "rt", errors="ignore") as fp:
+                for line in fp:
+                    process_line(line)
+        except Exception:
+            pass
+
+    # Resolve GeoIP for top detected human IPs
+    unique_human_ips = list(set(detected_human_ips))[:150]
     geo_map = get_geoip_info(unique_human_ips)
     
     # Calculate City Distribution
@@ -581,6 +647,7 @@ def api_access_logs():
         elif city == "Lokal RS":
             city_counts["Tegal (Lokal RS)"] += 1
 
+    parsed = list(parsed_deque)
     # Attach Geo info to parsed rows
     for item in parsed:
         ip = item["ip"]
@@ -618,10 +685,12 @@ def api_access_logs():
         "total_parsed": len(parsed),
         "status_distribution": dict(status_counts.most_common(6)),
         "top_ips": dict(ip_counts.most_common(5)),
+        "period": period,
+        "period_label": period_label,
         "analytics": {
-            "human_visitors_today": len(human_ips_today),
-            "human_hits_today": human_hits_today,
-            "bot_hits_today": bot_hits_today,
+            "human_visitors_today": len(human_ips),
+            "human_hits_today": human_hits,
+            "bot_hits_today": bot_hits,
             "top_cities": top_cities,
             "top_urls": top_urls
         }
