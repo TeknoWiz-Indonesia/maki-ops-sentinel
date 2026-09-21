@@ -23,6 +23,25 @@ DB_PATH = os.path.join(DATA_DIR, "sentinel.db")
 
 WHITELISTED_IPS = ["127.0.0.1", "172.16.61.188", "172.16.61.55", "172.16.62.181", "172.16.62.254", "172.17.3.2", "10.100.2.1", "172.16.62.247"]
 
+# 100% Offline Local GeoIP Database Paths (Zero External API calls)
+MMDB_CITY_PATH = os.path.join(DATA_DIR, "GeoLite2-City.mmdb")
+MMDB_ASN_PATH = os.path.join(DATA_DIR, "GeoLite2-ASN.mmdb")
+
+_mmdb_city_reader = None
+_mmdb_asn_reader = None
+
+def get_mmdb_readers():
+    global _mmdb_city_reader, _mmdb_asn_reader
+    try:
+        import maxminddb
+        if _mmdb_city_reader is None and os.path.exists(MMDB_CITY_PATH):
+            _mmdb_city_reader = maxminddb.open_database(MMDB_CITY_PATH)
+        if _mmdb_asn_reader is None and os.path.exists(MMDB_ASN_PATH):
+            _mmdb_asn_reader = maxminddb.open_database(MMDB_ASN_PATH)
+    except Exception:
+        pass
+    return _mmdb_city_reader, _mmdb_asn_reader
+
 # In-memory GeoIP Cache
 _GEO_CACHE = {}
 
@@ -39,56 +58,51 @@ def is_private_ip(ip: str) -> bool:
     )
 
 def get_geoip_info(ip_list):
-    """Batch lookup GeoIP info dengan memory caching untuk performa tinggi."""
-    needed = [ip for ip in ip_list if ip and ip not in _GEO_CACHE and not is_private_ip(ip)]
-    if needed:
-        try:
-            # Chunk in batches of 80 to respect limits
-            for i in range(0, min(len(needed), 160), 80):
-                batch = needed[i:i+80]
-                req = urllib.request.Request(
-                    "http://ip-api.com/batch?fields=query,status,country,regionName,city,isp",
-                    data=json.dumps(batch).encode(),
-                    headers={"Content-Type": "application/json", "User-Agent": "MakiOpsSentinel/2.0"}
-                )
-                with urllib.request.urlopen(req, timeout=3) as resp:
-                    data = json.loads(resp.read().decode())
-                    for item in data:
-                        q = item.get("query")
-                        if item.get("status") == "success":
-                            _GEO_CACHE[q] = {
-                                "city": item.get("city") or "Unknown",
-                                "region": item.get("regionName") or "",
-                                "country": item.get("country") or "Indonesia",
-                                "isp": item.get("isp") or "-"
-                            }
-                        else:
-                            _GEO_CACHE[q] = {
-                                "city": "Unknown",
-                                "region": "",
-                                "country": "Indonesia",
-                                "isp": "-"
-                            }
-        except Exception:
-            pass
-            
-    # Fallback for internal and unresolvable IPs
+    """100% Offline GeoIP resolver menggunakan local MaxMind DB (Zero Network API Limit)."""
+    r_city, r_asn = get_mmdb_readers()
+    
     for ip in ip_list:
-        if ip not in _GEO_CACHE:
-            if is_private_ip(ip):
-                _GEO_CACHE[ip] = {
-                    "city": "Lokal RS",
-                    "region": "Tegal",
-                    "country": "Internal",
-                    "isp": "LAN / Kardinah Network"
-                }
-            else:
-                _GEO_CACHE[ip] = {
-                    "city": "Unknown",
-                    "region": "",
-                    "country": "Indonesia",
-                    "isp": "-"
-                }
+        if not ip or ip in _GEO_CACHE:
+            continue
+            
+        if is_private_ip(ip):
+            _GEO_CACHE[ip] = {
+                "city": "Lokal RS",
+                "region": "Tegal",
+                "country": "Internal",
+                "isp": "LAN / Kardinah Network"
+            }
+            continue
+            
+        city = "-"
+        region = "-"
+        country = "Indonesia"
+        isp = "-"
+        
+        if r_city:
+            try:
+                c = r_city.get(ip) or {}
+                city = c.get("city", {}).get("names", {}).get("en") or "-"
+                subdivs = c.get("subdivisions", [])
+                region = subdivs[0].get("names", {}).get("en") if subdivs else "-"
+                country = c.get("country", {}).get("names", {}).get("en") or "Indonesia"
+            except Exception:
+                pass
+                
+        if r_asn:
+            try:
+                a = r_asn.get(ip) or {}
+                isp = a.get("autonomous_system_organization") or "-"
+            except Exception:
+                pass
+                
+        # If offline MMDB not available yet, fallback to safe defaults
+        _GEO_CACHE[ip] = {
+            "city": city if city != "-" else "Unknown",
+            "region": region if region != "-" else "",
+            "country": country,
+            "isp": isp
+        }
                 
     return _GEO_CACHE
 
