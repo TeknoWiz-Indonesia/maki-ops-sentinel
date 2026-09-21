@@ -1,6 +1,6 @@
-# Maki Ops Sentinel — Fail2ban & Security Operations Dashboard
+# SI-KRESNA — Sistem Inspeksi Keamanan & Rekam Eksplorasi Siber Jaringan Utama
 
-Maki Ops Sentinel is a lightweight, real-time security operations dashboard deployed on the RSUD Kardinah aaPanel web server (`172.16.62.181:8560`). It provides live telemetry for Fail2ban jails, active UFW firewall blocks, malicious web probe detections, whitelist management, and audit trails backed by a dedicated SQLite database in WAL mode.
+**SI-KRESNA** (*Sistem Inspeksi Keamanan dan Rekam Eksplorasi Siber Jaringan Utama* / Maki Ops Sentinel) adalah dashboard pemantauan keamanan siber dan telemetri akses web *real-time* yang di-deploy pada server web aaPanel RSUD Kardinah Kota Tegal (`172.16.62.181:8560`). Sistem ini menyediakan pemantauan live jail Fail2ban, pemblokiran firewall kernel UFW, deteksi serangan web, analitik pengunjung (GeoIP), manajemen whitelist, serta audit trail berbasis SQLite WAL mode.
 
 ---
 
