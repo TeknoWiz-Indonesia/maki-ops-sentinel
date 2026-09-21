@@ -693,6 +693,18 @@
   <script>
     lucide.createIcons();
 
+    // Support URL query/hash for direct tab linking e.g. /?tab=access-logs or #tab-access-logs
+    window.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const tabParam = urlParams.get('tab');
+      const hash = window.location.hash.replace('#', '');
+      if (tabParam) {
+        switchTab(tabParam.startsWith('tab-') ? tabParam : 'tab-' + tabParam);
+      } else if (hash) {
+        switchTab(hash.startsWith('tab-') ? hash : 'tab-' + hash);
+      }
+    });
+
     let currentActiveTab = 'tab-overview';
     let currentReportPeriod = '7d';
 
