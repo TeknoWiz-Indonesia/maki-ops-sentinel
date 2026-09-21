@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from collections import Counter
 import io
 import csv
+import urllib.request
 from flask import Flask, render_template, jsonify, request, Response
 
 app = Flask(__name__)
@@ -21,6 +22,75 @@ os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "sentinel.db")
 
 WHITELISTED_IPS = ["127.0.0.1", "172.16.61.188", "172.16.61.55", "172.16.62.181", "172.16.62.254", "172.17.3.2", "10.100.2.1", "172.16.62.247"]
+
+# In-memory GeoIP Cache
+_GEO_CACHE = {}
+
+def is_private_ip(ip: str) -> bool:
+    """Mengecek apakah IP adalah internal / private."""
+    if not ip or ip in ("localhost", "::1", "-"):
+        return True
+    return (
+        ip.startswith("127.") or 
+        ip.startswith("10.") or 
+        ip.startswith("172.16.") or 
+        ip.startswith("172.17.") or 
+        ip.startswith("192.168.")
+    )
+
+def get_geoip_info(ip_list):
+    """Batch lookup GeoIP info dengan memory caching untuk performa tinggi."""
+    needed = [ip for ip in ip_list if ip and ip not in _GEO_CACHE and not is_private_ip(ip)]
+    if needed:
+        try:
+            # Chunk in batches of 80 to respect limits
+            for i in range(0, min(len(needed), 160), 80):
+                batch = needed[i:i+80]
+                req = urllib.request.Request(
+                    "http://ip-api.com/batch?fields=query,status,country,regionName,city,isp",
+                    data=json.dumps(batch).encode(),
+                    headers={"Content-Type": "application/json", "User-Agent": "MakiOpsSentinel/2.0"}
+                )
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    data = json.loads(resp.read().decode())
+                    for item in data:
+                        q = item.get("query")
+                        if item.get("status") == "success":
+                            _GEO_CACHE[q] = {
+                                "city": item.get("city") or "Unknown",
+                                "region": item.get("regionName") or "",
+                                "country": item.get("country") or "Indonesia",
+                                "isp": item.get("isp") or "-"
+                            }
+                        else:
+                            _GEO_CACHE[q] = {
+                                "city": "Unknown",
+                                "region": "",
+                                "country": "Indonesia",
+                                "isp": "-"
+                            }
+        except Exception:
+            pass
+            
+    # Fallback for internal and unresolvable IPs
+    for ip in ip_list:
+        if ip not in _GEO_CACHE:
+            if is_private_ip(ip):
+                _GEO_CACHE[ip] = {
+                    "city": "Lokal RS",
+                    "region": "Tegal",
+                    "country": "Internal",
+                    "isp": "LAN / Kardinah Network"
+                }
+            else:
+                _GEO_CACHE[ip] = {
+                    "city": "Unknown",
+                    "region": "",
+                    "country": "Indonesia",
+                    "isp": "-"
+                }
+                
+    return _GEO_CACHE
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -381,20 +451,32 @@ def api_summary():
 
 @app.route("/api/access-logs")
 def api_access_logs():
-    """Live web access log view (Realtime tail, tidak disimpan di DB agar ringan)."""
+    """Live web access log view & Visitor Analytics (Realtime tail + GeoIP)."""
     limit = int(request.args.get("limit", 100))
     status_filter = request.args.get("status", "")
     ip_filter = request.args.get("ip", "").strip()
     search_filter = request.args.get("search", "").strip().lower()
     
-    raw_logs = run_cmd("tail -n 800 /www/wwwlogs/rsudkardinah.tegalkota.go.id.log 2>/dev/null")
+    # Read last 1500 lines for rich analytics and responsive tail
+    raw_logs = run_cmd("tail -n 1500 /www/wwwlogs/rsudkardinah.tegalkota.go.id.log 2>/dev/null")
     parsed = []
     
-    # Nginx Combined Log Regex
+    # Nginx Combined Log Regex & Bot Classifier
     pat = re.compile(r'^([0-9a-fA-F\.:]+)\s+-\s+(\S+)\s+\[([^\]]+)\]\s+"([A-Z]+)\s+([^\s]+)\s+([^"]*)"\s+([0-9]{3})\s+([0-9]+)\s+"([^"]*)"\s+"([^"]*)"')
+    bot_re = re.compile(r'bot|spider|crawl|curl|python|wget|go-http|scanner|scan|nikto|sqlmap|censys|shodan|zgrab|nmap|ahrefs|semrush|bingbot|googlebot|yandex|bytespider|facebookexternalhit|headless|urllib|httpclient|postman', re.I)
+
+    today_str = datetime.now().strftime("%d/%b/%Y")
 
     status_counts = Counter()
     ip_counts = Counter()
+    url_counts = Counter()
+    city_counts = Counter()
+    human_ips_today = set()
+    human_hits_today = 0
+    bot_hits_today = 0
+    
+    # Unique human IPs for batch GeoIP resolution
+    detected_human_ips = []
 
     for line in raw_logs.splitlines():
         if not line.strip():
@@ -403,6 +485,26 @@ def api_access_logs():
         if m:
             ip, user, date, method, path, proto, status, size, ref, ua = m.groups()
             
+            is_internal = is_private_ip(ip)
+            is_bot = bool(bot_re.search(ua)) or ua in ("-", "")
+            is_today = date.startswith(today_str)
+            
+            if is_today and not is_internal:
+                if is_bot:
+                    bot_hits_today += 1
+                else:
+                    human_hits_today += 1
+                    human_ips_today.add(ip)
+
+            if not is_bot and not is_internal:
+                detected_human_ips.append(ip)
+                # Count clean content page URLs (filter common static images/fonts/assets)
+                static_exts = ['.jpg', '.jpeg', '.png', '.gif', '.css', '.js', '.woff', '.woff2', '.ttf', '.eot', '.otf', '.svg', '.ico', '.webp', '.map']
+                is_static = any(path.lower().endswith(ext) or ext + "?" in path.lower() for ext in static_exts)
+                if not is_static:
+                    clean_path = path.split("?")[0]
+                    url_counts[clean_path] += 1
+
             sz_int = int(size) if size.isdigit() else 0
             if sz_int > 1048576:
                 size_hr = f"{sz_int/1048576:.1f} MB"
@@ -412,21 +514,28 @@ def api_access_logs():
                 size_hr = f"{sz_int} B"
 
             device = "Desktop"
-            if "Android" in ua:
+            if is_bot:
+                device = "Bot / Script"
+            elif "Android" in ua:
                 device = "Android"
             elif "iPhone" in ua or "iPad" in ua:
                 device = "iOS"
-            elif "curl" in ua or "bot" in ua.lower() or "spider" in ua.lower() or "crawl" in ua.lower():
-                device = "Bot / Script"
+            elif "Windows" in ua:
+                device = "Windows"
+            elif "Mac" in ua:
+                device = "macOS"
+            elif "Linux" in ua:
+                device = "Linux"
 
             status_counts[status] += 1
-            ip_counts[ip] += 1
+            if not is_internal and not is_bot:
+                ip_counts[ip] += 1
 
             if status_filter and status != status_filter:
                 continue
             if ip_filter and ip_filter not in ip:
                 continue
-            if search_filter and (search_filter not in path.lower() and search_filter not in ua.lower()):
+            if search_filter and (search_filter not in path.lower() and search_filter not in ua.lower() and search_filter not in ip.lower()):
                 continue
 
             parsed.append({
@@ -443,13 +552,65 @@ def api_access_logs():
                 "device": device
             })
 
+    # Resolve GeoIP for human IPs (up to 80 unique)
+    unique_human_ips = list(set(detected_human_ips))[:80]
+    geo_map = get_geoip_info(unique_human_ips)
+    
+    # Calculate City Distribution
+    for ip in detected_human_ips:
+        g = geo_map.get(ip, {})
+        city = g.get("city") or "Unknown"
+        reg = g.get("region") or ""
+        if city not in ("Unknown", "Lokal RS", "-"):
+            label = f"{city}, {reg}" if reg and reg != city else city
+            city_counts[label] += 1
+        elif city == "Lokal RS":
+            city_counts["Tegal (Lokal RS)"] += 1
+
+    # Attach Geo info to parsed rows
+    for item in parsed:
+        ip = item["ip"]
+        g = geo_map.get(ip, {})
+        item["city"] = g.get("city") or "-"
+        item["region"] = g.get("region") or "-"
+        item["isp"] = g.get("isp") or "-"
+
     parsed.reverse()
     
+    # Format Top 10 Cities
+    top_cities = []
+    total_city_hits = sum(city_counts.values()) or 1
+    for rank, (city_name, count) in enumerate(city_counts.most_common(10), 1):
+        top_cities.append({
+            "rank": rank,
+            "city": city_name,
+            "count": count,
+            "percentage": round((count / total_city_hits) * 100, 1)
+        })
+
+    # Format Top 10 URLs
+    top_urls = []
+    total_url_hits = sum(url_counts.values()) or 1
+    for rank, (url_path, count) in enumerate(url_counts.most_common(10), 1):
+        top_urls.append({
+            "rank": rank,
+            "url": url_path,
+            "count": count,
+            "percentage": round((count / total_url_hits) * 100, 1)
+        })
+
     return jsonify({
         "logs": parsed[:limit],
         "total_parsed": len(parsed),
         "status_distribution": dict(status_counts.most_common(6)),
-        "top_ips": dict(ip_counts.most_common(5))
+        "top_ips": dict(ip_counts.most_common(5)),
+        "analytics": {
+            "human_visitors_today": len(human_ips_today),
+            "human_hits_today": human_hits_today,
+            "bot_hits_today": bot_hits_today,
+            "top_cities": top_cities,
+            "top_urls": top_urls
+        }
     })
 
 @app.route("/api/banned-history")

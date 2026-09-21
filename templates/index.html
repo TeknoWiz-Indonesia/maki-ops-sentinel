@@ -192,15 +192,118 @@
       </div>
     </div>
 
-    <!-- TAB 2: ACCESS LOG NGINX TABLE (NEW!) -->
+    <!-- TAB 2: ACCESS LOG NGINX & VISITOR ANALYTICS -->
     <div id="tab-access-logs" class="tab-pane hidden space-y-4">
       
+      <!-- Visitor Analytics KPI Summary -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <!-- Human Visitors Today -->
+        <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 border border-emerald-100">
+            <i data-lucide="users" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0">
+            <p class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Pengunjung Hari Ini</p>
+            <div class="flex items-baseline gap-1.5">
+              <h3 class="text-xl font-bold text-slate-800 font-mono" id="access-human-visitors">0</h3>
+              <span class="text-[10px] text-emerald-600 font-medium">Bukan Bot</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Human Total Hits -->
+        <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 border border-blue-100">
+            <i data-lucide="activity" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0">
+            <p class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Total Request Human</p>
+            <div class="flex items-baseline gap-1.5">
+              <h3 class="text-xl font-bold text-slate-800 font-mono" id="access-human-hits">0</h3>
+              <span class="text-[10px] text-blue-600 font-medium">Hits</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bot Hits -->
+        <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-100">
+            <i data-lucide="bot" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0">
+            <p class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Crawler / Bot Hits</p>
+            <div class="flex items-baseline gap-1.5">
+              <h3 class="text-xl font-bold text-slate-800 font-mono" id="access-bot-hits">0</h3>
+              <span class="text-[10px] text-amber-600 font-medium">Auto-filter</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top City -->
+        <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex items-center gap-3">
+          <div class="w-10 h-10 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0 border border-indigo-100">
+            <i data-lucide="map-pin" class="w-5 h-5"></i>
+          </div>
+          <div class="min-w-0">
+            <p class="text-[11px] font-medium text-slate-500 uppercase tracking-wider">Top Kota Pengunjung</p>
+            <div class="flex items-baseline gap-1.5">
+              <h3 class="text-base font-bold text-slate-800 truncate" id="access-top-city">-</h3>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Top 10 Insights Grid: Top 10 Kota vs Top 10 URL -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        
+        <!-- Top 10 Cities Widget -->
+        <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div class="flex items-center gap-2">
+              <div class="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                <i data-lucide="map-pin" class="w-4 h-4"></i>
+              </div>
+              <div>
+                <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider">Top 10 Kota Pengunjung</h3>
+                <p class="text-[11px] text-slate-400">Sebaran lokasi berdasarkan resolusi GeoIP IP publik</p>
+              </div>
+            </div>
+            <span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-mono">GeoIP Live</span>
+          </div>
+
+          <div id="access-top-cities-list" class="space-y-2 text-xs">
+            <div class="py-4 text-center text-slate-400 italic">Memuat data kota pengunjung...</div>
+          </div>
+        </div>
+
+        <!-- Top 10 URLs Widget -->
+        <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+          <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div class="flex items-center gap-2">
+              <div class="w-7 h-7 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                <i data-lucide="compass" class="w-4 h-4"></i>
+              </div>
+              <div>
+                <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider">Top 10 Akses URL & Endpoint</h3>
+                <p class="text-[11px] text-slate-400">Halaman profil, layanan, dan fitur web terpopuler</p>
+              </div>
+            </div>
+            <span class="text-[10px] font-semibold px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 border border-emerald-200 font-mono">Content Hits</span>
+          </div>
+
+          <div id="access-top-urls-list" class="space-y-2 text-xs">
+            <div class="py-4 text-center text-slate-400 italic">Memuat data endpoint populer...</div>
+          </div>
+        </div>
+
+      </div>
+
       <!-- Filter Bar -->
       <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-col md:flex-row items-center justify-between gap-4">
         <div class="flex flex-wrap items-center gap-2.5 w-full md:w-auto">
           <div class="relative flex-1 md:w-64">
             <i data-lucide="search" class="w-4 h-4 text-slate-400 absolute left-3 top-2.5"></i>
-            <input type="text" id="filter-access-search" oninput="loadAccessLogs()" placeholder="Cari URL / User-Agent..." class="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-emerald-500 font-mono">
+            <input type="text" id="filter-access-search" oninput="loadAccessLogs()" placeholder="Cari URL / IP / User-Agent..." class="w-full pl-9 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-emerald-500 font-mono">
           </div>
 
           <div class="flex items-center gap-1.5">
@@ -236,6 +339,7 @@
               <tr>
                 <th class="py-3 px-3.5">Waktu (WIB)</th>
                 <th class="py-3 px-3.5">Client IP</th>
+                <th class="py-3 px-3.5">Lokasi / ISP</th>
                 <th class="py-3 px-3.5">Device / Agent</th>
                 <th class="py-3 px-3.5">Request URL / Endpoint</th>
                 <th class="py-3 px-3.5">HTTP Code</th>
@@ -245,7 +349,7 @@
             </thead>
             <tbody id="access-logs-tbody" class="divide-y divide-slate-100 text-slate-700 font-mono text-[11px]">
               <tr>
-                <td colspan="7" class="py-6 px-4 text-center text-slate-400 italic">Memuat data real-time access log...</td>
+                <td colspan="8" class="py-6 px-4 text-center text-slate-400 italic">Memuat data real-time access log...</td>
               </tr>
             </tbody>
           </table>
@@ -793,7 +897,92 @@
         const url = `/api/access-logs?limit=${limit}&status=${status}&search=${encodeURIComponent(search)}`;
         const res = await fetch(url).then(r => r.json());
 
-        // Render Pills
+        // 1. Render Visitor Analytics KPIs
+        if (res.analytics) {
+          const humanVisitorsEl = document.getElementById('access-human-visitors');
+          const humanHitsEl = document.getElementById('access-human-hits');
+          const botHitsEl = document.getElementById('access-bot-hits');
+          const topCityEl = document.getElementById('access-top-city');
+
+          if (humanVisitorsEl) humanVisitorsEl.textContent = (res.analytics.human_visitors_today || 0).toLocaleString();
+          if (humanHitsEl) humanHitsEl.textContent = (res.analytics.human_hits_today || 0).toLocaleString();
+          if (botHitsEl) botHitsEl.textContent = (res.analytics.bot_hits_today || 0).toLocaleString();
+          
+          if (topCityEl) {
+            const firstCity = res.analytics.top_cities && res.analytics.top_cities.length > 0 ? res.analytics.top_cities[0] : null;
+            topCityEl.textContent = firstCity ? `${firstCity.city} (${firstCity.percentage}%)` : '-';
+          }
+
+          // 2. Render Top 10 Cities List
+          const citiesListEl = document.getElementById('access-top-cities-list');
+          if (citiesListEl) {
+            if (!res.analytics.top_cities || res.analytics.top_cities.length === 0) {
+              citiesListEl.innerHTML = '<div class="py-4 text-center text-slate-400 italic">Belum ada data lokasi kota pengunjung</div>';
+            } else {
+              citiesListEl.innerHTML = res.analytics.top_cities.map((c, idx) => {
+                let badgeColor = 'bg-slate-100 text-slate-600 border-slate-200';
+                let barColor = 'bg-indigo-500';
+                if (idx === 0) { badgeColor = 'bg-amber-100 text-amber-800 border-amber-300 font-bold'; barColor = 'bg-amber-500'; }
+                else if (idx === 1) { badgeColor = 'bg-slate-200 text-slate-800 border-slate-300 font-bold'; barColor = 'bg-slate-600'; }
+                else if (idx === 2) { badgeColor = 'bg-orange-100 text-orange-800 border-orange-300 font-bold'; barColor = 'bg-orange-500'; }
+
+                return `
+                  <div class="p-2 rounded-lg bg-slate-50 border border-slate-100 space-y-1.5">
+                    <div class="flex items-center justify-between text-xs">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="w-5 h-5 rounded flex items-center justify-center text-[10px] font-mono border ${badgeColor}">#${c.rank}</span>
+                        <span class="font-semibold text-slate-800 truncate">${c.city}</span>
+                      </div>
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        <span class="font-mono text-slate-600 font-medium">${c.count.toLocaleString()} hits</span>
+                        <span class="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-mono font-bold">${c.percentage}%</span>
+                      </div>
+                    </div>
+                    <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <div class="${barColor} h-full rounded-full transition-all duration-500" style="width: ${Math.min(c.percentage, 100)}%"></div>
+                    </div>
+                  </div>
+                `;
+              }).join('');
+            }
+          }
+
+          // 3. Render Top 10 URLs List
+          const urlsListEl = document.getElementById('access-top-urls-list');
+          if (urlsListEl) {
+            if (!res.analytics.top_urls || res.analytics.top_urls.length === 0) {
+              urlsListEl.innerHTML = '<div class="py-4 text-center text-slate-400 italic">Belum ada data akses endpoint</div>';
+            } else {
+              urlsListEl.innerHTML = res.analytics.top_urls.map((u, idx) => {
+                let badgeColor = 'bg-slate-100 text-slate-600 border-slate-200';
+                let barColor = 'bg-emerald-500';
+                if (idx === 0) { badgeColor = 'bg-emerald-100 text-emerald-800 border-emerald-300 font-bold'; }
+                else if (idx === 1) { badgeColor = 'bg-teal-100 text-teal-800 border-teal-300 font-bold'; barColor = 'bg-teal-500'; }
+                else if (idx === 2) { badgeColor = 'bg-cyan-100 text-cyan-800 border-cyan-300 font-bold'; barColor = 'bg-cyan-500'; }
+
+                return `
+                  <div class="p-2 rounded-lg bg-slate-50 border border-slate-100 space-y-1.5">
+                    <div class="flex items-center justify-between text-xs">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <span class="w-5 h-5 rounded flex items-center justify-center text-[10px] font-mono border ${badgeColor}">#${u.rank}</span>
+                        <span class="font-mono text-slate-800 truncate text-[11px] font-medium" title="${u.url}">${u.url}</span>
+                      </div>
+                      <div class="flex items-center gap-1.5 shrink-0">
+                        <span class="font-mono text-slate-600 font-medium">${u.count.toLocaleString()} hits</span>
+                        <span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] font-mono font-bold">${u.percentage}%</span>
+                      </div>
+                    </div>
+                    <div class="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                      <div class="${barColor} h-full rounded-full transition-all duration-500" style="width: ${Math.min(u.percentage, 100)}%"></div>
+                    </div>
+                  </div>
+                `;
+              }).join('');
+            }
+          }
+        }
+
+        // 4. Render Pills
         const pillsEl = document.getElementById('access-status-pills');
         if (res.status_distribution) {
           pillsEl.innerHTML = Object.entries(res.status_distribution).map(([st, cnt]) => {
@@ -806,10 +995,10 @@
           }).join('');
         }
 
-        // Render Table Rows
+        // 5. Render Table Rows
         const tbody = document.getElementById('access-logs-tbody');
         if (!res.logs || res.logs.length === 0) {
-          tbody.innerHTML = '<tr><td colspan="7" class="py-6 px-4 text-center text-slate-400 italic">Tidak ada traffic log yang cocok dengan filter</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="8" class="py-6 px-4 text-center text-slate-400 italic">Tidak ada traffic log yang cocok dengan filter</td></tr>';
           return;
         }
 
@@ -820,19 +1009,27 @@
           if (l.status.startsWith('4')) stColor = 'bg-amber-50 text-amber-800 border border-amber-200';
           if (l.status.startsWith('5')) stColor = 'bg-rose-50 text-rose-700 border border-rose-200';
 
+          const locDisplay = l.city && l.city !== '-' ? `${l.city}` : '-';
+
           return `
             <tr class="hover:bg-slate-50 transition">
               <td class="py-2.5 px-3.5 text-slate-600 font-sans text-xs whitespace-nowrap">${l.time}</td>
               <td class="py-2.5 px-3.5 font-bold text-slate-900 whitespace-nowrap">${l.ip}</td>
+              <td class="py-2.5 px-3.5 whitespace-nowrap">
+                <div class="flex items-center gap-1.5">
+                  <span class="font-sans font-medium text-slate-800 text-[11px]">${locDisplay}</span>
+                </div>
+                ${l.isp && l.isp !== '-' ? `<p class="text-[10px] text-slate-400 font-sans truncate max-w-[130px]" title="${l.isp}">${l.isp}</p>` : ''}
+              </td>
               <td class="py-2.5 px-3.5">
                 <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-sans font-medium">
                   ${l.device}
                 </span>
                 <p class="text-[10px] text-slate-400 truncate max-w-[140px] font-sans" title="${l.user_agent}">${l.user_agent}</p>
               </td>
-              <td class="py-2.5 px-3.5 max-w-[320px]">
+              <td class="py-2.5 px-3.5 max-w-[300px]">
                 <span class="font-bold text-slate-500">${l.method}</span>
-                <span class="text-slate-800 break-all">${l.path}</span>
+                <span class="text-slate-800 break-all font-mono text-[11px]">${l.path}</span>
                 ${l.referer ? `<p class="text-[10px] text-slate-400 truncate font-sans">Ref: ${l.referer}</p>` : ''}
               </td>
               <td class="py-2.5 px-3.5">
@@ -847,6 +1044,8 @@
             </tr>
           `;
         }).join('');
+
+        if (window.lucide) lucide.createIcons();
 
       } catch (e) {
         console.error("Access log fetch error:", e);
