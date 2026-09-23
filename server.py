@@ -521,6 +521,7 @@ def api_access_logs():
     ip_counts = Counter()
     url_counts = Counter()
     city_counts = Counter()
+    device_counts = Counter()
     human_ips = set()
     human_hits = 0
     bot_hits = 0
@@ -544,7 +545,24 @@ def api_access_logs():
         is_internal = is_private_ip(ip)
         is_bot = bool(bot_re.search(ua)) or ua in ("-", "")
 
+        # Classify User-Agent Device / Platform
+        if is_bot:
+            ua_cat = "Bot / Crawler"
+        elif "Android" in ua:
+            ua_cat = "Android"
+        elif "iPhone" in ua or "iPad" in ua or "iOS" in ua:
+            ua_cat = "iOS (Apple)"
+        elif "Windows" in ua:
+            ua_cat = "Windows"
+        elif "Macintosh" in ua or "Mac OS" in ua:
+            ua_cat = "macOS"
+        elif "Linux" in ua:
+            ua_cat = "Linux"
+        else:
+            ua_cat = "Lainnya"
+
         if not is_internal:
+            device_counts[ua_cat] += 1
             if is_bot:
                 bot_hits += 1
             else:
@@ -681,6 +699,17 @@ def api_access_logs():
             "percentage": round((count / total_url_hits) * 100, 1)
         })
 
+    # Format Top User-Agents / Devices
+    top_user_agents = []
+    total_device_hits = sum(device_counts.values()) or 1
+    for rank, (dev_name, count) in enumerate(device_counts.most_common(8), 1):
+        top_user_agents.append({
+            "rank": rank,
+            "name": dev_name,
+            "count": count,
+            "percentage": round((count / total_device_hits) * 100, 1)
+        })
+
     return jsonify({
         "logs": parsed[:limit],
         "total_parsed": len(parsed),
@@ -693,7 +722,8 @@ def api_access_logs():
             "human_hits_today": human_hits,
             "bot_hits_today": bot_hits,
             "top_cities": top_cities,
-            "top_urls": top_urls
+            "top_urls": top_urls,
+            "top_user_agents": top_user_agents
         }
     })
 
