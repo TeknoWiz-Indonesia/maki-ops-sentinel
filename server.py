@@ -12,6 +12,7 @@ import io
 import csv
 import glob
 import gzip
+import math
 import urllib.request
 from flask import Flask, render_template, jsonify, request, Response
 
@@ -742,8 +743,15 @@ def api_banned_history():
 
 @app.route("/api/web-attacks")
 def api_web_attacks():
-    """Mengambil riwayat serangan web mencurigakan yang tersimpan di SQLite."""
-    limit = int(request.args.get("limit", 50))
+    """Mengambil riwayat serangan web mencurigakan yang tersimpan di SQLite dengan pagination & filter."""
+    limit = int(request.args.get("limit", 25))
+    if limit < 1:
+        limit = 25
+    page = int(request.args.get("page", 1))
+    if page < 1:
+        page = 1
+    offset = (page - 1) * limit
+
     category = request.args.get("category", "").strip()
     search = request.args.get("search", "").strip()
 
@@ -751,38 +759,65 @@ def api_web_attacks():
         conn = get_db()
         cur = conn.cursor()
 
-        query = "SELECT probe_time as date, ip_address as ip, method, path, status_code as status, category FROM attack_probes WHERE 1=1"
+        where_clauses = ["1=1"]
         params = []
         if category:
-            query += " AND category = ?"
+            where_clauses.append("category = ?")
             params.append(category)
         if search:
-            query += " AND (ip_address LIKE ? OR path LIKE ?)"
-            params.extend([f"%{search}%", f"%{search}%"])
+            where_clauses.append("(ip_address LIKE ? OR path LIKE ? OR method LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
 
-        query += " ORDER BY id DESC LIMIT ?"
-        params.append(limit)
+        where_sql = " AND ".join(where_clauses)
 
-        cur.execute(query, params)
-        probes = [dict(r) for r in cur.fetchall()]
+        # Count filtered records
+        count_sql = f"SELECT count(*) FROM attack_probes WHERE {where_sql}"
+        cur.execute(count_sql, params)
+        total_filtered = cur.fetchone()[0]
 
+        # Total overall
         cur.execute("SELECT count(*) FROM attack_probes")
-        total = cur.fetchone()[0]
+        total_all = cur.fetchone()[0]
+
+        # Query paginated rows
+        query_sql = f"SELECT probe_time as date, ip_address as ip, method, path, status_code as status, category FROM attack_probes WHERE {where_sql} ORDER BY id DESC LIMIT ? OFFSET ?"
+        cur.execute(query_sql, params + [limit, offset])
+        probes = [dict(r) for r in cur.fetchall()]
         conn.close()
 
-        # Fallback jika DB masih kosong
-        if not probes:
+        # Fallback jika DB masih kosong saat awal startup
+        if not probes and total_all == 0:
             sync_probes_from_logs()
             conn = get_db()
             cur = conn.cursor()
-            cur.execute(query, params)
+            cur.execute(count_sql, params)
+            total_filtered = cur.fetchone()[0]
+            cur.execute("SELECT count(*) FROM attack_probes")
+            total_all = cur.fetchone()[0]
+            cur.execute(query_sql, params + [limit, offset])
             probes = [dict(r) for r in cur.fetchall()]
-            total = len(probes)
             conn.close()
 
-        return jsonify({"probes": probes, "total": total})
+        total_pages = max(1, math.ceil(total_filtered / limit)) if total_filtered > 0 else 1
+
+        return jsonify({
+            "probes": probes,
+            "total": total_all,
+            "total_filtered": total_filtered,
+            "page": page,
+            "limit": limit,
+            "total_pages": total_pages
+        })
     except Exception as e:
-        return jsonify({"probes": [], "total": 0, "error": str(e)})
+        return jsonify({
+            "probes": [],
+            "total": 0,
+            "total_filtered": 0,
+            "page": 1,
+            "limit": limit,
+            "total_pages": 1,
+            "error": str(e)
+        })
 
 @app.route("/api/audit-logs")
 def api_audit_logs():

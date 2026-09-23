@@ -382,34 +382,89 @@
     </div>
 
     <!-- TAB 3: WEB ATTACKS -->
-    <div id="tab-web-attacks" class="tab-pane hidden space-y-3">
-      <div class="flex items-center justify-between">
-        <h2 class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
-          <i data-lucide="radar" class="w-4 h-4 text-rose-600"></i>
-          Deteksi Serangan & Probe Domain (rsudkardinah.tegalkota.go.id)
-        </h2>
-        <span class="text-xs font-semibold px-2 py-0.5 rounded bg-rose-50 text-rose-700 border border-rose-200 font-mono" id="web-attacks-count">0 hits</span>
+    <div id="tab-web-attacks" class="tab-pane hidden space-y-4">
+      
+      <!-- Header & Filter Bar -->
+      <div class="bg-white border border-slate-200 rounded-xl p-4 shadow-sm space-y-3">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5">
+            <div class="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center border border-rose-100">
+              <i data-lucide="radar" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h2 class="text-xs font-bold text-slate-800 uppercase tracking-wider">Deteksi Serangan & Probe Domain</h2>
+              <p class="text-[11px] text-slate-500">Log eksplorasi siber & exploit scanner (rsudkardinah.tegalkota.go.id)</p>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-semibold px-2.5 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-mono" id="web-attacks-count">0 hits</span>
+            <button onclick="exportReportCSV('probes')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition border border-slate-200 shadow-2xs" title="Ekspor CSV">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              <span>Export CSV</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Filter Controls -->
+        <div class="flex flex-wrap items-center gap-2.5 pt-2 border-t border-slate-100">
+          <div class="relative flex-1 min-w-[200px] md:max-w-xs">
+            <i data-lucide="search" class="w-3.5 h-3.5 text-slate-400 absolute left-3 top-2.5"></i>
+            <input type="text" id="filter-web-search" oninput="handleWebAttacksSearch()" placeholder="Cari IP / Method / Path..." class="w-full pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-rose-500 font-mono">
+          </div>
+
+          <select id="filter-web-category" onchange="handleWebAttacksFilter()" class="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-rose-500">
+            <option value="">Semua Kategori Serangan</option>
+            <option value="Sensitive File Leak">Sensitive File Leak</option>
+            <option value="Admin Brute / Enum">Admin Brute / Enum</option>
+            <option value="Web Vulnerability Probe / Exploit">Web Vulnerability Probe / Exploit</option>
+            <option value="CMS / WP Scanner">CMS / WP Scanner</option>
+            <option value="SQL Injection / LFI">SQL Injection / LFI</option>
+          </select>
+
+          <select id="filter-web-limit" onchange="handleWebAttacksLimit()" class="px-2.5 py-1.5 bg-slate-50 border border-slate-300 rounded-lg text-xs text-slate-700 focus:outline-none focus:border-rose-500">
+            <option value="10">10 Baris</option>
+            <option value="25" selected>25 Baris</option>
+            <option value="50">50 Baris</option>
+            <option value="100">100 Baris</option>
+          </select>
+
+          <button onclick="loadWebAttacks(1)" class="p-1.5 text-slate-600 hover:text-slate-900 rounded-lg bg-slate-100 hover:bg-slate-200 border border-slate-200 transition" title="Refresh data">
+            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+          </button>
+        </div>
       </div>
 
+      <!-- Table Container -->
       <div class="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
         <div class="overflow-x-auto">
           <table class="w-full text-left text-xs">
             <thead class="bg-slate-50 text-slate-600 border-b border-slate-200 font-semibold uppercase tracking-wider">
               <tr>
-                <th class="py-3 px-4">Waktu (WIB)</th>
-                <th class="py-3 px-4">Attacker IP</th>
-                <th class="py-3 px-4">Kategori Serangan</th>
-                <th class="py-3 px-4">HTTP Method & Path Target</th>
-                <th class="py-3 px-4">Status Nginx</th>
-                <th class="py-3 px-4 text-center">Tindakan</th>
+                <th class="py-3 px-3.5 whitespace-nowrap">Waktu (WIB)</th>
+                <th class="py-3 px-3.5 whitespace-nowrap">Attacker IP</th>
+                <th class="py-3 px-3.5 whitespace-nowrap">Kategori Serangan</th>
+                <th class="py-3 px-3.5 min-w-[320px] max-w-xl">HTTP Method & Path Target</th>
+                <th class="py-3 px-3.5 whitespace-nowrap">Status Nginx</th>
+                <th class="py-3 px-3.5 whitespace-nowrap text-center">Tindakan</th>
               </tr>
             </thead>
-            <tbody id="web-attacks-tbody" class="divide-y divide-slate-100 text-slate-700 font-mono">
+            <tbody id="web-attacks-tbody" class="divide-y divide-slate-100 text-slate-700 font-mono text-[11px]">
               <tr>
-                <td colspan="6" class="py-4 px-4 text-center text-slate-400 italic">Menganalisis log serangan website...</td>
+                <td colspan="6" class="py-6 px-4 text-center text-slate-400 italic">Menganalisis log serangan website...</td>
               </tr>
             </tbody>
           </table>
+        </div>
+
+        <!-- Pagination Footer -->
+        <div id="web-attacks-pagination" class="bg-slate-50/80 px-4 py-3 border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+          <div class="text-[11px] font-medium" id="web-attacks-page-info">
+            Menampilkan 0 - 0 dari 0 data serangan
+          </div>
+          <div class="flex items-center gap-1.5" id="web-attacks-page-nav">
+            <!-- Populated by JS -->
+          </div>
         </div>
       </div>
     </div>
@@ -729,6 +784,8 @@
         loadAccessLogs();
       } else if (tabId === 'tab-report') {
         loadReport();
+      } else if (tabId === 'tab-web-attacks') {
+        loadWebAttacks(currentWebAttacksPage);
       }
     }
 
@@ -1182,34 +1239,15 @@
           wlEl.innerHTML = '<span class="text-slate-400 text-xs italic">Belum ada IP whitelist terdaftar</span>';
         }
 
-        // Render Web Attacks Probes
-        const webTbody = document.getElementById('web-attacks-tbody');
-        document.getElementById('web-attacks-count').innerText = `${webAtkRes.total} suspicious hits`;
-        if (webAtkRes.probes.length === 0) {
-          webTbody.innerHTML = `<tr><td colspan="6" class="py-4 px-4 text-center text-emerald-600 font-sans font-medium">Tidak ada aktivitas probe mencurigakan dalam 1500 request terakhir</td></tr>`;
-        } else {
-          webTbody.innerHTML = webAtkRes.probes.map(p => `
-            <tr class="hover:bg-rose-50/40 transition">
-              <td class="py-2.5 px-4 text-slate-600 font-sans text-xs">${p.date}</td>
-              <td class="py-2.5 px-4 font-bold text-rose-700">${p.ip}</td>
-              <td class="py-2.5 px-4">
-                <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
-                  ${p.category}
-                </span>
-              </td>
-              <td class="py-2.5 px-4 text-slate-800"><span class="font-semibold text-slate-500">${p.method}</span> <span class="text-rose-600">${p.path}</span></td>
-              <td class="py-2.5 px-4">
-                <span class="px-2 py-0.5 rounded text-[11px] font-bold ${p.status === '404' ? 'bg-slate-100 text-slate-700' : 'bg-rose-100 text-rose-800'}">
-                  ${p.status}
-                </span>
-              </td>
-              <td class="py-2.5 px-4 text-center">
-                <button onclick="banWebAttacker('${p.ip}')" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-sans font-semibold transition shadow-sm">
-                  Ban Attacker
-                </button>
-              </td>
-            </tr>
-          `).join('');
+        // Tab Badges & Attack counts
+        const webCountEl = document.getElementById('web-attacks-count');
+        if (webCountEl && webAtkRes) {
+          const countNum = webAtkRes.total_filtered !== undefined ? webAtkRes.total_filtered : (webAtkRes.total || 0);
+          webCountEl.innerText = `${countNum.toLocaleString()} hits`;
+        }
+        const badgeWebEl = document.getElementById('badge-tab-web');
+        if (badgeWebEl && webAtkRes) {
+          badgeWebEl.innerText = (webAtkRes.total || 0).toLocaleString();
         }
 
         // Render Jails
@@ -1302,11 +1340,13 @@
           logsEl.appendChild(div);
         });
 
-        // If access tab is active, refresh it too
+        // If access tab or web attacks tab is active, refresh it too
         if (currentActiveTab === 'tab-access-logs') {
           loadAccessLogs();
         } else if (currentActiveTab === 'tab-report') {
           loadReport();
+        } else if (currentActiveTab === 'tab-web-attacks') {
+          loadWebAttacks(currentWebAttacksPage);
         }
 
         lucide.createIcons();
@@ -1341,6 +1381,146 @@
         body: JSON.stringify({ip})
       });
       refreshData();
+    }
+
+    let currentWebAttacksPage = 1;
+    let currentWebAttacksLimit = 25;
+    let currentWebAttacksSearch = '';
+    let currentWebAttacksCategory = '';
+    let webAttacksSearchTimeout = null;
+
+    function handleWebAttacksSearch() {
+      clearTimeout(webAttacksSearchTimeout);
+      webAttacksSearchTimeout = setTimeout(() => {
+        currentWebAttacksSearch = document.getElementById('filter-web-search').value.trim();
+        loadWebAttacks(1);
+      }, 300);
+    }
+
+    function handleWebAttacksFilter() {
+      currentWebAttacksCategory = document.getElementById('filter-web-category').value;
+      loadWebAttacks(1);
+    }
+
+    function handleWebAttacksLimit() {
+      currentWebAttacksLimit = parseInt(document.getElementById('filter-web-limit').value, 10) || 25;
+      loadWebAttacks(1);
+    }
+
+    async function loadWebAttacks(page = 1) {
+      currentWebAttacksPage = page;
+      const search = currentWebAttacksSearch;
+      const category = currentWebAttacksCategory;
+      const limit = currentWebAttacksLimit;
+
+      try {
+        const url = `/api/web-attacks?page=${page}&limit=${limit}&search=${encodeURIComponent(search)}&category=${encodeURIComponent(category)}`;
+        const res = await fetch(url).then(r => r.json());
+
+        // Update count badge
+        const countBadge = document.getElementById('web-attacks-count');
+        if (countBadge) {
+          const totalHits = res.total_filtered !== undefined ? res.total_filtered : (res.total || 0);
+          countBadge.innerText = `${totalHits.toLocaleString()} suspicious hits`;
+        }
+        const tabBadge = document.getElementById('badge-tab-web');
+        if (tabBadge) {
+          tabBadge.innerText = (res.total !== undefined ? res.total : 0).toLocaleString();
+        }
+
+        const tbody = document.getElementById('web-attacks-tbody');
+        if (!res.probes || res.probes.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="py-6 px-4 text-center text-slate-400 font-sans italic">Tidak ada aktivitas probe atau serangan web yang cocok dengan filter</td></tr>`;
+          renderWebAttacksPagination(0, limit, 1, 1);
+          return;
+        }
+
+        tbody.innerHTML = res.probes.map(p => `
+          <tr class="hover:bg-rose-50/40 transition">
+            <td class="py-2.5 px-3.5 text-slate-600 font-sans text-xs whitespace-nowrap">${p.date}</td>
+            <td class="py-2.5 px-3.5 font-bold text-rose-700 whitespace-nowrap">${p.ip}</td>
+            <td class="py-2.5 px-3.5 whitespace-nowrap">
+              <span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                ${p.category}
+              </span>
+            </td>
+            <td class="py-2.5 px-3.5 max-w-xl break-all whitespace-normal">
+              <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 text-slate-700 border border-slate-200 uppercase break-all mr-1.5 align-middle">${p.method}</span>
+              <span class="text-rose-600 break-all font-mono text-[11px] align-middle">${p.path}</span>
+            </td>
+            <td class="py-2.5 px-3.5 whitespace-nowrap">
+              <span class="px-2 py-0.5 rounded text-[11px] font-bold ${p.status === '404' ? 'bg-slate-100 text-slate-700' : 'bg-rose-100 text-rose-800'}">
+                ${p.status}
+              </span>
+            </td>
+            <td class="py-2.5 px-3.5 text-center whitespace-nowrap">
+              <button onclick="banWebAttacker('${p.ip}')" class="px-2.5 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded text-[11px] font-sans font-semibold transition shadow-2xs">
+                Ban IP
+              </button>
+            </td>
+          </tr>
+        `).join('');
+
+        const totalItems = res.total_filtered !== undefined ? res.total_filtered : (res.total || 0);
+        const totalPages = res.total_pages || Math.max(1, Math.ceil(totalItems / limit));
+        renderWebAttacksPagination(totalItems, limit, page, totalPages);
+
+      } catch (e) {
+        console.error("Failed to load web attacks:", e);
+      }
+    }
+
+    function renderWebAttacksPagination(total, limit, currentPage, totalPages) {
+      const pageInfoEl = document.getElementById('web-attacks-page-info');
+      const pageNavEl = document.getElementById('web-attacks-page-nav');
+      if (!pageInfoEl || !pageNavEl) return;
+
+      if (total === 0) {
+        pageInfoEl.innerHTML = 'Menampilkan <b>0</b> dari <b>0</b> data serangan';
+        pageNavEl.innerHTML = '';
+        return;
+      }
+
+      const start = (currentPage - 1) * limit + 1;
+      const end = Math.min(currentPage * limit, total);
+      pageInfoEl.innerHTML = `Menampilkan <b>${start.toLocaleString()}</b> - <b>${end.toLocaleString()}</b> dari <b>${total.toLocaleString()}</b> data serangan`;
+
+      let navHtml = '';
+
+      // Prev Button
+      const prevDisabled = currentPage <= 1 ? 'opacity-40 cursor-not-allowed bg-slate-100 text-slate-400' : 'hover:bg-slate-200 text-slate-700 bg-white border border-slate-300 shadow-2xs cursor-pointer';
+      navHtml += `<button onclick="if(${currentPage} > 1) loadWebAttacks(${currentPage - 1})" class="px-2.5 py-1 rounded text-xs font-semibold transition ${prevDisabled}" ${currentPage <= 1 ? 'disabled' : ''}>&larr; Prev</button>`;
+
+      // Page numbers (compact window of 5 pages)
+      let startPage = Math.max(1, currentPage - 2);
+      let endPage = Math.min(totalPages, startPage + 4);
+      if (endPage - startPage < 4) {
+        startPage = Math.max(1, endPage - 4);
+      }
+
+      if (startPage > 1) {
+        navHtml += `<button onclick="loadWebAttacks(1)" class="px-2.5 py-1 rounded text-xs bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 shadow-2xs font-mono">1</button>`;
+        if (startPage > 2) navHtml += `<span class="text-slate-400 px-0.5">...</span>`;
+      }
+
+      for (let p = startPage; p <= endPage; p++) {
+        if (p === currentPage) {
+          navHtml += `<button class="px-2.5 py-1 rounded text-xs font-bold bg-rose-600 text-white font-mono shadow-2xs">${p}</button>`;
+        } else {
+          navHtml += `<button onclick="loadWebAttacks(${p})" class="px-2.5 py-1 rounded text-xs bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 shadow-2xs font-mono">${p}</button>`;
+        }
+      }
+
+      if (endPage < totalPages) {
+        if (endPage < totalPages - 1) navHtml += `<span class="text-slate-400 px-0.5">...</span>`;
+        navHtml += `<button onclick="loadWebAttacks(${totalPages})" class="px-2.5 py-1 rounded text-xs bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 shadow-2xs font-mono">${totalPages}</button>`;
+      }
+
+      // Next Button
+      const nextDisabled = currentPage >= totalPages ? 'opacity-40 cursor-not-allowed bg-slate-100 text-slate-400' : 'hover:bg-slate-200 text-slate-700 bg-white border border-slate-300 shadow-2xs cursor-pointer';
+      navHtml += `<button onclick="if(${currentPage} < ${totalPages}) loadWebAttacks(${currentPage + 1})" class="px-2.5 py-1 rounded text-xs font-semibold transition ${nextDisabled}" ${currentPage >= totalPages ? 'disabled' : ''}>Next &rarr;</button>`;
+
+      pageNavEl.innerHTML = navHtml;
     }
 
     function banWebAttacker(ip) {
