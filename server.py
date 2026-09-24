@@ -30,7 +30,7 @@ try:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image as RLImage
     from reportlab.graphics.shapes import Drawing, Rect, Circle, Wedge, String, Line, Group, Polygon
     from reportlab.pdfgen import canvas
     REPORTLAB_AVAILABLE = True
@@ -1418,12 +1418,25 @@ class NumberedCanvas(canvas.Canvas):
         if self._pageNumber > 1:
             self.setFillColor(rl_colors.HexColor("#0F766E"))
             self.rect(12 * mm, h - 13 * mm, w - 24 * mm, 0.8, fill=True, stroke=False)
+            
+            logo_path = os.path.join(BASE_DIR, "static", "img", "logo_emblem.png")
+            if not os.path.exists(logo_path):
+                logo_path = "/opt/fail2ban-dashboard/static/img/logo_emblem.png"
+            if os.path.exists(logo_path):
+                try:
+                    self.drawImage(logo_path, 12 * mm, h - 12.6 * mm, width=5.5 * mm, height=4.2 * mm, mask='auto')
+                    text_x = 19 * mm
+                except Exception:
+                    text_x = 12 * mm
+            else:
+                text_x = 12 * mm
+
             self.setFont("Helvetica-Bold", 7.5)
             self.setFillColor(rl_colors.HexColor("#0F766E"))
-            self.drawString(12 * mm, h - 10.5 * mm, "SI-KRESNA")
+            self.drawString(text_x, h - 10.5 * mm, "SI-KRESNA")
             self.setFont("Helvetica", 7)
             self.setFillColor(rl_colors.HexColor("#64748B"))
-            self.drawString(28 * mm, h - 10.5 * mm, "|   RSUD Kardinah Kota Tegal — Laporan Analisis Access Log Web & Trafik")
+            self.drawString(text_x + 16 * mm, h - 10.5 * mm, "|   RSUD Kardinah Kota Tegal — Laporan Analisis Access Log Web & Trafik")
             self.drawRightString(w - 12 * mm, h - 10.5 * mm, "rsudkardinah.tegalkota.go.id")
 
         # Running Footer (all pages)
@@ -1438,26 +1451,53 @@ class NumberedCanvas(canvas.Canvas):
 
 
 def _make_hero_banner(period_label, timestamp_str, width=273*mm, height=26*mm):
-    d = Drawing(width, height)
-    d.add(Rect(0, 0, width, height, rx=4, ry=4, fillColor=rl_colors.HexColor("#0F766E"), strokeColor=rl_colors.HexColor("#115E59"), strokeWidth=1))
-    d.add(String(6 * mm, height - 6.5 * mm, "SI-KRESNA  •  SISTEM INSPEKSI KEAMANAN SIBER RSUD KARDINAH",
-                 fontSize=6.5, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#99F6E4")))
-    d.add(String(6 * mm, height - 13.5 * mm, "Laporan Access Log Web & Statistik Pengunjung",
-                 fontSize=12.5, fontName="Helvetica-Bold", fillColor=rl_colors.white))
-    d.add(String(6 * mm, height - 19.5 * mm, "Sistem Pemantauan Trafik, Analisis Perilaku Pengunjung, dan Deteksi Anomali Server",
-                 fontSize=7, fontName="Helvetica", fillColor=rl_colors.HexColor("#CCFBF1")))
-    
-    rx = width - 68 * mm
-    d.add(Rect(rx, height - 12 * mm, 62 * mm, 7 * mm, rx=2, ry=2,
-               fillColor=rl_colors.HexColor("#134E4A"), strokeColor=rl_colors.HexColor("#2DD4BF"), strokeWidth=0.5))
-    d.add(String(rx + 3 * mm, height - 8.5 * mm, f"Periode: {period_label}",
-                 fontSize=6.5, fontName="Helvetica-Bold", fillColor=rl_colors.white))
-    
-    d.add(Rect(rx, height - 21 * mm, 62 * mm, 7 * mm, rx=2, ry=2,
-               fillColor=rl_colors.HexColor("#134E4A"), strokeColor=rl_colors.HexColor("#2DD4BF"), strokeWidth=0.5))
-    d.add(String(rx + 3 * mm, height - 17.5 * mm, f"Dicetak: {timestamp_str} WIB",
-                 fontSize=6.5, fontName="Helvetica", fillColor=rl_colors.white))
-    return d
+    logo_path = os.path.join(BASE_DIR, "static", "img", "logo_emblem.png")
+    if not os.path.exists(logo_path):
+        logo_path = "/opt/fail2ban-dashboard/static/img/logo_emblem.png"
+
+    styles = getSampleStyleSheet()
+    t1 = ParagraphStyle("hb1", fontName="Helvetica-Bold", fontSize=6.5, textColor=rl_colors.HexColor("#99F6E4"), spaceAfter=1)
+    t2 = ParagraphStyle("hb2", fontName="Helvetica-Bold", fontSize=12, textColor=rl_colors.white, spaceAfter=2)
+    t3 = ParagraphStyle("hb3", fontName="Helvetica", fontSize=6.5, textColor=rl_colors.HexColor("#CCFBF1"))
+    badge_p = ParagraphStyle("bp", fontName="Helvetica-Bold", fontSize=6.5, textColor=rl_colors.white)
+    badge_d = ParagraphStyle("bd", fontName="Helvetica", fontSize=6.5, textColor=rl_colors.white)
+
+    right_table = Table([
+        [Paragraph(f"Periode: {period_label}", badge_p)],
+        [Paragraph(f"Dicetak: {timestamp_str} WIB", badge_d)]
+    ], colWidths=[62*mm])
+    right_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), rl_colors.HexColor("#134E4A")),
+        ("BOX", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#2DD4BF")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#2DD4BF")),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3*mm),
+    ]))
+
+    center_flow = [
+        Paragraph("SI-KRESNA &nbsp;•&nbsp; SISTEM INSPEKSI KEAMANAN SIBER RSUD KARDINAH", t1),
+        Paragraph("Laporan Access Log Web &amp; Statistik Pengunjung", t2),
+        Paragraph("Sistem Pemantauan Trafik, Analisis Perilaku Pengunjung, dan Deteksi Anomali Server", t3)
+    ]
+
+    logo_elem = Paragraph("<b>SI-KRESNA</b>", t2)
+    if os.path.exists(logo_path):
+        logo_elem = RLImage(logo_path, width=26*mm, height=19*mm, mask='auto')
+
+    hero_table = Table([
+        [logo_elem, center_flow, right_table]
+    ], colWidths=[28*mm, 180*mm, 65*mm])
+    hero_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), rl_colors.HexColor("#0F766E")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5*mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5*mm),
+        ("LEFTPADDING", (0, 0), (0, -1), 2.5*mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2.5*mm),
+        ("BOX", (0, 0), (-1, -1), 1, rl_colors.HexColor("#115E59")),
+    ]))
+    return hero_table
 
 
 def _make_kpi_cards(cards, width=273*mm, height=22*mm):
@@ -1689,26 +1729,31 @@ def _make_error_summary_cards(status_counts, width=273*mm, height=18*mm):
 
 
 def _make_security_shield_closing(width=273*mm, height=52*mm):
-    d = Drawing(width, height)
-    d.add(Rect(0, 0, width, height, rx=3, ry=3, fillColor=rl_colors.HexColor("#F8FAFC"), strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
-    cx = width / 2.0
-    cy = height / 2.0 + 4 * mm
-    pts = [cx, cy + 14 * mm,
-           cx + 12 * mm, cy + 8 * mm,
-           cx + 12 * mm, cy - 2 * mm,
-           cx, cy - 14 * mm,
-           cx - 12 * mm, cy - 2 * mm,
-           cx - 12 * mm, cy + 8 * mm]
-    d.add(Polygon(pts, fillColor=rl_colors.HexColor("#0F766E"), strokeColor=rl_colors.HexColor("#115E59"), strokeWidth=1))
-    d.add(Circle(cx, cy + 1 * mm, 4 * mm, fillColor=rl_colors.white, strokeColor=rl_colors.white, strokeWidth=0))
-    d.add(Rect(cx - 3.5 * mm, cy - 4 * mm, 7 * mm, 5 * mm, rx=1, ry=1, fillColor=rl_colors.white, strokeWidth=0))
-    d.add(Circle(cx, cy - 1.5 * mm, 0.8 * mm, fillColor=rl_colors.HexColor("#0F766E"), strokeWidth=0))
-    d.add(String(cx, cy - 18 * mm, "SI-KRESNA • KEAMANAN SIBER & PRIVASI TERJAGA",
-                 fontSize=7.5, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F766E"), textAnchor="middle"))
-    d.add(String(cx, 4.5 * mm,
-                 "« Keamanan siber adalah proses berkelanjutan untuk menjaga integritas, kerahasiaan, dan ketersediaan layanan publik. »",
-                 fontSize=6.5, fontName="Helvetica-Oblique", fillColor=rl_colors.HexColor("#64748B"), textAnchor="middle"))
-    return d
+    logo_path = os.path.join(BASE_DIR, "static", "img", "logo_emblem.png")
+    if not os.path.exists(logo_path):
+        logo_path = "/opt/fail2ban-dashboard/static/img/logo_emblem.png"
+
+    styles = getSampleStyleSheet()
+    t_style = ParagraphStyle("sctitle", fontName="Helvetica-Bold", fontSize=8, textColor=rl_colors.HexColor("#0F766E"), alignment=1, spaceAfter=2)
+    q_style = ParagraphStyle("scquote", fontName="Helvetica-Oblique", fontSize=6.5, textColor=rl_colors.HexColor("#64748B"), alignment=1)
+
+    elements = []
+    if os.path.exists(logo_path):
+        elements.append(RLImage(logo_path, width=32*mm, height=23*mm, mask='auto'))
+        elements.append(Spacer(1, 2*mm))
+    elements.append(Paragraph("SI-KRESNA &nbsp;•&nbsp; KEAMANAN SIBER &amp; PRIVASI TERJAGA", t_style))
+    elements.append(Paragraph("« Keamanan siber adalah proses berkelanjutan untuk menjaga integritas, kerahasiaan, dan ketersediaan layanan publik. »", q_style))
+
+    closing_table = Table([[elements]], colWidths=[width])
+    closing_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), rl_colors.HexColor("#F8FAFC")),
+        ("BOX", (0, 0), (-1, -1), 0.6, rl_colors.HexColor("#CBD5E1")),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3*mm),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3*mm),
+    ]))
+    return closing_table
 
 
 def _pdf_executive_access_logs_response(data, filename):
