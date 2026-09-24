@@ -1165,6 +1165,74 @@ def _xlsx_response(sheets, filename):
     )
 
 
+def _pdf_donut_chart(title, entries, width=190 * mm, height=78 * mm, center_label="Total"):
+    """Gambar donut chart + legend dalam satu Drawing flowable.
+
+    entries: list of dict(label, count, percentage)
+    """
+    from reportlab.graphics.shapes import Drawing, Wedge, Circle, String, Line, Rect
+
+    total = sum(e.get("count", 0) for e in entries) or 1
+    palette = ["#0d9488", "#0ea5e9", "#6366f1", "#a855f7", "#f97316",
+               "#f43f5e", "#14b8a6", "#84cc16", "#eab308", "#94a3b8"]
+
+    d = Drawing(width, height)
+    cx = 44 * mm
+    cy = height / 2.0 - 4 * mm
+    r_outer = 29 * mm
+    r_inner = 20 * mm
+
+    # Background card
+    d.add(Rect(0, 0, width, height, fillColor=rl_colors.HexColor("#F8FAFC"),
+               strokeColor=rl_colors.HexColor("#E2E8F0"), strokeWidth=0.6, rx=4, ry=4))
+
+    # Title
+    d.add(String(6 * mm, height - 6 * mm, title, fontSize=8.5, fontName="Helvetica-Bold",
+                 fillColor=rl_colors.HexColor("#0F172A")))
+
+    start_angle = 90.0
+    for idx, e in enumerate(entries):
+        frac = (e.get("count", 0) / total) if total else 0
+        extent = -frac * 360.0
+        if extent == 0:
+            continue
+        color = rl_colors.HexColor(palette[idx % len(palette)])
+        d.add(Wedge(cx, cy, r_outer, start_angle + extent, start_angle,
+                    fillColor=color, strokeColor=rl_colors.white, strokeWidth=0.8))
+        start_angle += extent
+
+    # Hollow center
+    d.add(Circle(cx, cy, r_inner, fillColor=rl_colors.HexColor("#F8FAFC"),
+                 strokeColor=rl_colors.HexColor("#F8FAFC"), strokeWidth=0))
+    d.add(String(cx, cy + 2.2 * mm, f"{total:,}", fontSize=11, fontName="Helvetica-Bold",
+                 fillColor=rl_colors.HexColor("#0F172A"), textAnchor="middle"))
+    d.add(String(cx, cy - 3.0 * mm, center_label, fontSize=6.5, fontName="Helvetica",
+                 fillColor=rl_colors.HexColor("#64748B"), textAnchor="middle"))
+
+    # Legend (two columns)
+    lx = 92 * mm
+    ly = height - 13 * mm
+    row_h = 4.6 * mm
+    per_col = max(1, int((height - 16 * mm) / row_h))
+    for idx, e in enumerate(entries):
+        col = idx // per_col
+        row = idx % per_col
+        x = lx + col * 48 * mm
+        y = ly - row * row_h
+        if y < 5 * mm:
+            continue
+        color = rl_colors.HexColor(palette[idx % len(palette)])
+        d.add(Rect(x, y, 2.6 * mm, 2.6 * mm, fillColor=color, strokeColor=color))
+        label = str(e.get("label", ""))[:22]
+        d.add(String(x + 4 * mm, y + 0.3 * mm, label, fontSize=6.5, fontName="Helvetica",
+                     fillColor=rl_colors.HexColor("#334155")))
+        d.add(String(x + 30 * mm, y + 0.3 * mm,
+                     f"{e.get('count', 0):,} ({e.get('percentage', 0)}%)",
+                     fontSize=6.5, fontName="Helvetica-Bold",
+                     fillColor=rl_colors.HexColor("#0F766E")))
+    return d
+
+
 def _pdf_table(headers, rows, col_widths=None):
     style = TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#0F766E")),
@@ -1210,9 +1278,18 @@ def _pdf_response(title, period_label, sections, filename):
     ]
     for sec in sections:
         story.append(Paragraph(sec["heading"], h2))
+        if sec.get("chart"):
+            story.append(_pdf_donut_chart(
+                sec.get("chart_title", sec["heading"]),
+                sec["chart"],
+                width=sec.get("chart_width", 190 * mm),
+                height=sec.get("chart_height", 78 * mm),
+                center_label=sec.get("chart_center", "Total"),
+            ))
+            story.append(Spacer(1, 4))
         if sec.get("rows"):
             story.append(_pdf_table(sec["headers"], sec["rows"], sec.get("col_widths")))
-        else:
+        elif not sec.get("chart"):
             story.append(Paragraph("<i>Tidak ada data pada periode ini.</i>", meta))
         story.append(Spacer(1, 6))
     doc.build(story)
@@ -1282,13 +1359,19 @@ def api_access_logs_export():
              "col_widths": [70 * mm, 60 * mm]},
             {"heading": "2. Top 10 Kota Pengunjung (GeoIP Offline MMDB)",
              "headers": ["#", "Kota", "Hits", "Persentase"], "rows": city_rows,
-             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm]},
+             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm],
+             "chart": [{"label": c["city"], "count": c["count"], "percentage": c["percentage"]} for c in analytics.get("top_cities", [])],
+             "chart_title": "Donut Chart — Sebaran Kota Pengunjung",
+             "chart_center": "Hits"},
             {"heading": "3. Top 10 Akses URL & Endpoint",
              "headers": ["#", "URL / Endpoint", "Hits", "Persentase"], "rows": url_rows,
              "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm]},
             {"heading": "4. Perangkat & User-Agent",
              "headers": ["#", "Perangkat / Platform", "Hits", "Persentase"], "rows": ua_rows,
-             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm]},
+             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm],
+             "chart": [{"label": a["name"], "count": a["count"], "percentage": a["percentage"]} for a in analytics.get("top_user_agents", [])],
+             "chart_title": "Donut Chart — Perangkat & User-Agent",
+             "chart_center": "Hits"},
             {"heading": "5. Detail Access Log (Nginx)",
              "headers": ["Waktu", "IP", "Lokasi / ISP", "ISP", "Device", "Method", "URL", "Status", "Size"],
              "rows": log_rows,
@@ -1358,9 +1441,16 @@ def api_report_export():
             {"heading": "1. Ringkasan KPI Keamanan", "headers": ["Metrik", "Nilai"], "rows": summary_rows,
              "col_widths": [90 * mm, 60 * mm]},
             {"heading": "2. Distribusi Kategori Serangan", "headers": ["Kategori", "Jumlah", "Persentase"],
-             "rows": cat_rows, "col_widths": [110 * mm, 30 * mm, 30 * mm]},
+             "rows": cat_rows, "col_widths": [110 * mm, 30 * mm, 30 * mm],
+             "chart": [{"label": c["category"], "count": c["count"], "percentage": c["percentage"]} for c in categories],
+             "chart_title": "Donut Chart — Distribusi Kategori Serangan",
+             "chart_center": "Probes"},
             {"heading": "3. Top 10 Penyerang", "headers": ["#", "IP Penyerang", "Hits", "Kategori", "Terakhir Terlihat", "Whitelist"],
-             "rows": atk_rows, "col_widths": [10 * mm, 40 * mm, 20 * mm, 70 * mm, 40 * mm, 22 * mm]},
+             "rows": atk_rows, "col_widths": [10 * mm, 40 * mm, 20 * mm, 70 * mm, 40 * mm, 22 * mm],
+             "chart": [{"label": a.get("ip_address", "-"), "count": a.get("hit_count", 0),
+                        "percentage": round((a.get("hit_count", 0) / (summary.get("total_probes", 0) or 1)) * 100, 1)} for a in attackers[:8]],
+             "chart_title": "Donut Chart — Top Penyerang (Hits)",
+             "chart_center": "Hits"},
             {"heading": "4. Tren Harian", "headers": ["Tanggal", "Probes", "Bans"], "rows": daily_rows,
              "col_widths": [50 * mm, 35 * mm, 35 * mm]},
             {"heading": "5. Rekap Per Jail Fail2ban", "headers": ["Jail", "Bans", "Unbans"], "rows": jail_rows,
