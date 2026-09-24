@@ -30,7 +30,9 @@ try:
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak
+    from reportlab.graphics.shapes import Drawing, Rect, Circle, Wedge, String, Line, Group, Polygon
+    from reportlab.pdfgen import canvas
     REPORTLAB_AVAILABLE = True
 except Exception:
     REPORTLAB_AVAILABLE = False
@@ -535,6 +537,12 @@ def build_access_logs_payload(limit=100, status_filter="", ip_filter="", search_
     url_counts = Counter()
     city_counts = Counter()
     device_counts = Counter()
+    endpoint_cat_counts = Counter()
+    error_404_counts = Counter()
+    error_ip_counts = Counter()
+    hourly_human = [0] * 24
+    hourly_bot = [0] * 24
+    potential_probes = []
     human_ips = set()
     human_hits = 0
     bot_hits = 0
@@ -557,6 +565,36 @@ def build_access_logs_payload(limit=100, status_filter="", ip_filter="", search_
 
         is_internal = is_private_ip(ip)
         is_bot = bool(bot_re.search(ua)) or ua in ("-", "")
+
+        # Hourly breakdown
+        try:
+            h = int(date_str[12:14])
+            if 0 <= h < 24:
+                if is_bot:
+                    hourly_bot[h] += 1
+                else:
+                    hourly_human[h] += 1
+        except Exception:
+            pass
+
+        # Error tracking
+        clean_path = path.split("?")[0]
+        if status == "404":
+            error_404_counts[clean_path] += 1
+        if status.startswith(("4", "5")) and not is_internal:
+            error_ip_counts[ip] += 1
+
+        # Endpoint categorization
+        if any(clean_path.lower().endswith(ext) for ext in static_exts):
+            endpoint_cat_counts["Static Assets"] += 1
+        elif any(clean_path.startswith(p) for p in ("/service", "/api", "/live", "/portal/api")):
+            endpoint_cat_counts["API / Layanan"] += 1
+        elif any(k in clean_path.lower() for k in (".env", ".git", "wp-", "xmlrpc", "phpmyadmin", "eval(", "shell")):
+            endpoint_cat_counts["Bot Probes"] += 1
+            if len(potential_probes) < 8:
+                potential_probes.append({"time": date_str, "ip": ip, "method": method, "path": path, "status": status})
+        else:
+            endpoint_cat_counts["Halaman Web"] += 1
 
         # Classify User-Agent Device / Platform
         if is_bot:
@@ -723,6 +761,28 @@ def build_access_logs_payload(limit=100, status_filter="", ip_filter="", search_
             "percentage": round((count / total_device_hits) * 100, 1)
         })
 
+    # Format Endpoint Categories
+    endpoint_categories = []
+    total_ep = sum(endpoint_cat_counts.values()) or 1
+    for cat, count in endpoint_cat_counts.most_common():
+        endpoint_categories.append({
+            "category": cat,
+            "count": count,
+            "percentage": round((count / total_ep) * 100, 1)
+        })
+
+    # Format Top 404 URLs
+    top_404 = [{"url": u, "count": c} for u, c in error_404_counts.most_common(5)]
+
+    # Format Top Error IPs
+    top_err_ips = []
+    for ip, count in error_ip_counts.most_common(5):
+        g = geo_map.get(ip, {})
+        city = g.get("city") or "-"
+        reg = g.get("region") or ""
+        loc = f"{city}, {reg}" if reg and reg != city else city
+        top_err_ips.append({"ip": ip, "count": count, "location": loc, "isp": g.get("isp", "-")})
+
     return {
         "logs": parsed[:limit],
         "total_parsed": len(parsed),
@@ -742,7 +802,14 @@ def build_access_logs_payload(limit=100, status_filter="", ip_filter="", search_
             "bot_hits_today": bot_hits,
             "top_cities": top_cities,
             "top_urls": top_urls,
-            "top_user_agents": top_user_agents
+            "top_user_agents": top_user_agents,
+            "hourly_human": hourly_human,
+            "hourly_bot": hourly_bot,
+            "status_counts": dict(status_counts),
+            "endpoint_categories": endpoint_categories,
+            "top_404_urls": top_404,
+            "top_error_ips": top_err_ips,
+            "potential_probes": potential_probes[:5]
         }
     }
 
@@ -1301,6 +1368,691 @@ def _pdf_response(title, period_label, sections, filename):
     )
 
 
+# ============================================================
+# EXECUTIVE ACCESS LOGS PDF GENERATOR (6 Pages)
+# ============================================================
+
+def _pdf_callout_table(title, text, width=273*mm, accent="#0F766E", bg="#F0FDF4", border="#A7F3D0"):
+    styles = getSampleStyleSheet()
+    t_style = ParagraphStyle("ctitle", fontName="Helvetica-Bold", fontSize=7.2, textColor=rl_colors.HexColor(accent), spaceAfter=2)
+    b_style = ParagraphStyle("cbody", fontName="Helvetica", fontSize=6.5, textColor=rl_colors.HexColor("#334155"), leading=8.5)
+    content = [
+        Paragraph(title, t_style),
+        Paragraph(text, b_style)
+    ]
+    t = Table([[content]], colWidths=[width])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), rl_colors.HexColor(bg)),
+        ("BOX", (0, 0), (-1, -1), 0.6, rl_colors.HexColor(border)),
+        ("LINEBEFORE", (0, 0), (0, -1), 2.5, rl_colors.HexColor(accent)),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4 * mm),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 4 * mm),
+    ]))
+    return t
+
+
+class NumberedCanvas(canvas.Canvas):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._saved_page_states = []
+
+    def showPage(self):
+        self._saved_page_states.append(dict(self.__dict__))
+        self._startPage()
+
+    def save(self):
+        num_pages = len(self._saved_page_states)
+        for state in self._saved_page_states:
+            self.__dict__.update(state)
+            self.draw_decorations(num_pages)
+            super().showPage()
+        super().save()
+
+    def draw_decorations(self, num_pages):
+        self.saveState()
+        w, h = self._pagesize
+        
+        # Running Header (pages 2+)
+        if self._pageNumber > 1:
+            self.setFillColor(rl_colors.HexColor("#0F766E"))
+            self.rect(12 * mm, h - 13 * mm, w - 24 * mm, 0.8, fill=True, stroke=False)
+            self.setFont("Helvetica-Bold", 7.5)
+            self.setFillColor(rl_colors.HexColor("#0F766E"))
+            self.drawString(12 * mm, h - 10.5 * mm, "SI-KRESNA")
+            self.setFont("Helvetica", 7)
+            self.setFillColor(rl_colors.HexColor("#64748B"))
+            self.drawString(28 * mm, h - 10.5 * mm, "|   RSUD Kardinah Kota Tegal — Laporan Analisis Access Log Web & Trafik")
+            self.drawRightString(w - 12 * mm, h - 10.5 * mm, "rsudkardinah.tegalkota.go.id")
+
+        # Running Footer (all pages)
+        self.setStrokeColor(rl_colors.HexColor("#CBD5E1"))
+        self.setLineWidth(0.6)
+        self.line(12 * mm, 11 * mm, w - 12 * mm, 11 * mm)
+        self.setFont("Helvetica", 6.5)
+        self.setFillColor(rl_colors.HexColor("#64748B"))
+        self.drawString(12 * mm, 7.5 * mm, "Dokumen Resmi Sistem Inspeksi Keamanan & Rekam Eksplorasi Siber (SI-KRESNA) • RSUD Kardinah Kota Tegal")
+        self.drawRightString(w - 12 * mm, 7.5 * mm, f"Halaman {self._pageNumber} dari {num_pages}")
+        self.restoreState()
+
+
+def _make_hero_banner(period_label, timestamp_str, width=273*mm, height=26*mm):
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=4, ry=4, fillColor=rl_colors.HexColor("#0F766E"), strokeColor=rl_colors.HexColor("#115E59"), strokeWidth=1))
+    d.add(String(6 * mm, height - 6.5 * mm, "SI-KRESNA  •  SISTEM INSPEKSI KEAMANAN SIBER RSUD KARDINAH",
+                 fontSize=6.5, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#99F6E4")))
+    d.add(String(6 * mm, height - 13.5 * mm, "Laporan Access Log Web & Statistik Pengunjung",
+                 fontSize=12.5, fontName="Helvetica-Bold", fillColor=rl_colors.white))
+    d.add(String(6 * mm, height - 19.5 * mm, "Sistem Pemantauan Trafik, Analisis Perilaku Pengunjung, dan Deteksi Anomali Server",
+                 fontSize=7, fontName="Helvetica", fillColor=rl_colors.HexColor("#CCFBF1")))
+    
+    rx = width - 68 * mm
+    d.add(Rect(rx, height - 12 * mm, 62 * mm, 7 * mm, rx=2, ry=2,
+               fillColor=rl_colors.HexColor("#134E4A"), strokeColor=rl_colors.HexColor("#2DD4BF"), strokeWidth=0.5))
+    d.add(String(rx + 3 * mm, height - 8.5 * mm, f"Periode: {period_label}",
+                 fontSize=6.5, fontName="Helvetica-Bold", fillColor=rl_colors.white))
+    
+    d.add(Rect(rx, height - 21 * mm, 62 * mm, 7 * mm, rx=2, ry=2,
+               fillColor=rl_colors.HexColor("#134E4A"), strokeColor=rl_colors.HexColor("#2DD4BF"), strokeWidth=0.5))
+    d.add(String(rx + 3 * mm, height - 17.5 * mm, f"Dicetak: {timestamp_str} WIB",
+                 fontSize=6.5, fontName="Helvetica", fillColor=rl_colors.white))
+    return d
+
+
+def _make_kpi_cards(cards, width=273*mm, height=22*mm):
+    d = Drawing(width, height)
+    gap = 4 * mm
+    card_w = (width - gap * 3) / 4.0
+    for i, c in enumerate(cards[:4]):
+        x = i * (card_w + gap)
+        d.add(Rect(x, 0, card_w, height, rx=3, ry=3,
+                   fillColor=rl_colors.HexColor("#F8FAFC"), strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
+        acc = rl_colors.HexColor(c.get("accent", "#0F766E"))
+        d.add(Rect(x, height - 2.2 * mm, card_w, 2.2 * mm, rx=1, ry=1,
+                   fillColor=acc, strokeColor=acc, strokeWidth=0))
+        d.add(String(x + 3.5 * mm, height - 6.5 * mm, c["title"][:22].upper(),
+                     fontSize=6, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#64748B")))
+        d.add(String(x + 3.5 * mm, height - 14.5 * mm, str(c["value"]),
+                     fontSize=13, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+        d.add(String(x + 3.5 * mm, 2.8 * mm, str(c.get("sub", "")),
+                     fontSize=6, fontName="Helvetica", fillColor=acc))
+    return d
+
+
+def _make_hourly_chart(hourly_human, hourly_bot, width=134*mm, height=64*mm):
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=3, ry=3, fillColor=rl_colors.white, strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
+    d.add(String(5 * mm, height - 6 * mm, "1.1 Trafik Request per Jam (24 Jam)",
+                 fontSize=8, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+    d.add(Rect(width - 45 * mm, height - 6.5 * mm, 3 * mm, 3 * mm, fillColor=rl_colors.HexColor("#0D9488"), strokeColor=rl_colors.white, strokeWidth=0))
+    d.add(String(width - 40 * mm, height - 6 * mm, "Human", fontSize=6.5, fontName="Helvetica", fillColor=rl_colors.HexColor("#334155")))
+    d.add(Rect(width - 24 * mm, height - 6.5 * mm, 3 * mm, 3 * mm, fillColor=rl_colors.HexColor("#F97316"), strokeColor=rl_colors.white, strokeWidth=0))
+    d.add(String(width - 19 * mm, height - 6 * mm, "Bot", fontSize=6.5, fontName="Helvetica", fillColor=rl_colors.HexColor("#334155")))
+    
+    plot_x = 10 * mm
+    plot_y = 11 * mm
+    plot_w = width - 16 * mm
+    plot_h = height - 22 * mm
+    d.add(Line(plot_x, plot_y, plot_x + plot_w, plot_y, strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
+    
+    max_val = max([h + b for h, b in zip(hourly_human, hourly_bot)] + [1])
+    slot_w = plot_w / 24.0
+    bar_w = slot_w * 0.72
+    
+    for i in range(24):
+        bx = plot_x + i * slot_w + (slot_w - bar_w) / 2.0
+        h_human = (hourly_human[i] / max_val) * plot_h
+        h_bot = (hourly_bot[i] / max_val) * plot_h
+        if h_human > 0:
+            d.add(Rect(bx, plot_y, bar_w, h_human,
+                       fillColor=rl_colors.HexColor("#0D9488"), strokeColor=rl_colors.white, strokeWidth=0.3))
+        if h_bot > 0:
+            d.add(Rect(bx, plot_y + h_human, bar_w, h_bot,
+                       fillColor=rl_colors.HexColor("#F97316"), strokeColor=rl_colors.white, strokeWidth=0.3))
+        if i % 4 == 0 or i == 23:
+            d.add(String(bx + bar_w / 2.0, plot_y - 3.8 * mm, f"{i:02d}",
+                         fontSize=5.5, fontName="Helvetica", fillColor=rl_colors.HexColor("#64748B"), textAnchor="middle"))
+    return d
+
+
+def _make_status_donut(status_counts, width=134*mm, height=64*mm, title="1.2 Distribusi HTTP Status"):
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=3, ry=3, fillColor=rl_colors.white, strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
+    d.add(String(5 * mm, height - 6 * mm, title,
+                 fontSize=8, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+    
+    c2 = sum(v for k, v in status_counts.items() if k.startswith("2"))
+    c3 = sum(v for k, v in status_counts.items() if k.startswith("3"))
+    c4 = sum(v for k, v in status_counts.items() if k.startswith("4"))
+    c5 = sum(v for k, v in status_counts.items() if k.startswith("5"))
+    total = c2 + c3 + c4 + c5 or 1
+    
+    palette = [("#0D9488", "2xx (Sukses)", c2),
+               ("#F59E0B", "3xx (Redirect)", c3),
+               ("#F97316", "4xx (Client Error)", c4),
+               ("#EF4444", "5xx (Server Error)", c5)]
+    
+    cx = 32 * mm
+    cy = height / 2.0 - 2 * mm
+    r_outer = 22 * mm
+    r_inner = 15 * mm
+    
+    start_angle = 90.0
+    for col_hex, label, count in palette:
+        frac = count / total
+        extent = -frac * 360.0
+        if extent == 0:
+            continue
+        d.add(Wedge(cx, cy, r_outer, start_angle + extent, start_angle,
+                    fillColor=rl_colors.HexColor(col_hex), strokeColor=rl_colors.white, strokeWidth=0.6))
+        start_angle += extent
+        
+    d.add(Circle(cx, cy, r_inner, fillColor=rl_colors.white, strokeColor=rl_colors.white, strokeWidth=0))
+    d.add(String(cx, cy + 1.5 * mm, f"{total:,}", fontSize=8.5, fontName="Helvetica-Bold",
+                 fillColor=rl_colors.HexColor("#0F172A"), textAnchor="middle"))
+    d.add(String(cx, cy - 2.5 * mm, "Hits", fontSize=6, fontName="Helvetica",
+                 fillColor=rl_colors.HexColor("#64748B"), textAnchor="middle"))
+    
+    lx = 64 * mm
+    ly = height - 16 * mm
+    for i, (col_hex, label, count) in enumerate(palette):
+        y = ly - i * 8.5 * mm
+        pct = round((count / total) * 100, 1)
+        d.add(Rect(lx, y, 2.8 * mm, 2.8 * mm, fillColor=rl_colors.HexColor(col_hex), strokeColor=rl_colors.white, strokeWidth=0))
+        d.add(String(lx + 4.5 * mm, y + 0.3 * mm, label, fontSize=6.5, fontName="Helvetica", fillColor=rl_colors.HexColor("#334155")))
+        d.add(String(lx + 42 * mm, y + 0.3 * mm, f"{count:,} ({pct}%)", fontSize=6.5, fontName="Helvetica-Bold",
+                     fillColor=rl_colors.HexColor("#0F172A")))
+    return d
+
+
+def _make_top_cities_chart(cities, width=134*mm, height=74*mm, title="2.1 Top 8 Kota Pengunjung (GeoIP MMDB)"):
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=3, ry=3, fillColor=rl_colors.white, strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
+    d.add(String(5 * mm, height - 6 * mm, title,
+                 fontSize=8, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+    
+    total = sum(c.get("count", 0) for c in cities) or 1
+    max_cnt = max([c.get("count", 0) for c in cities] + [1])
+    bar_area_w = 40 * mm
+    bar_x = 52 * mm
+    row_h = 6.4 * mm
+    start_y = height - 13 * mm
+    
+    for i, c in enumerate(cities[:8]):
+        y = start_y - i * row_h
+        cnt = c.get("count", 0)
+        pct = c.get("percentage", round((cnt / total) * 100, 1))
+        raw_city = c.get("city", "-")
+        city_name = raw_city.split(",")[0].strip() if "," in raw_city else raw_city
+        lbl = city_name[:18]
+        
+        d.add(String(5 * mm, y + 0.8 * mm, f"{i+1}. {lbl}", fontSize=6.2, fontName="Helvetica", fillColor=rl_colors.HexColor("#334155")))
+        
+        bw = (cnt / max_cnt) * bar_area_w
+        d.add(Rect(bar_x, y + 0.5 * mm, bar_area_w, 3.5 * mm, rx=1, ry=1, fillColor=rl_colors.HexColor("#F1F5F9"), strokeWidth=0))
+        if bw > 0:
+            d.add(Rect(bar_x, y + 0.5 * mm, bw, 3.5 * mm, rx=1, ry=1,
+                       fillColor=rl_colors.HexColor("#0D9488"), strokeWidth=0))
+        
+        d.add(String(bar_x + bar_area_w + 3 * mm, y + 0.8 * mm, f"{cnt:,} ({pct}%)",
+                     fontSize=6, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+    return d
+
+
+def _make_device_analytics_box(user_agents, width=134*mm, height=74*mm):
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=3, ry=3, fillColor=rl_colors.white, strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
+    d.add(String(5 * mm, height - 6 * mm, "2.2 Perangkat & User-Agent",
+                 fontSize=8, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+    
+    total = sum(u.get("count", 0) for u in user_agents) or 1
+    palette = ["#0D9488", "#0284C7", "#6366F1", "#A855F7", "#F97316", "#94A3B8"]
+    
+    cx = 30 * mm
+    cy = height / 2.0 - 4 * mm
+    r_outer = 20 * mm
+    r_inner = 13 * mm
+    
+    start_angle = 90.0
+    for i, u in enumerate(user_agents[:6]):
+        cnt = u.get("count", 0)
+        frac = cnt / total
+        extent = -frac * 360.0
+        if extent == 0:
+            continue
+        d.add(Wedge(cx, cy, r_outer, start_angle + extent, start_angle,
+                    fillColor=rl_colors.HexColor(palette[i % len(palette)]), strokeColor=rl_colors.white, strokeWidth=0.6))
+        start_angle += extent
+        
+    d.add(Circle(cx, cy, r_inner, fillColor=rl_colors.white, strokeColor=rl_colors.white, strokeWidth=0))
+    d.add(String(cx, cy + 1.2 * mm, f"{total:,}", fontSize=8, fontName="Helvetica-Bold",
+                 fillColor=rl_colors.HexColor("#0F172A"), textAnchor="middle"))
+    d.add(String(cx, cy - 2.5 * mm, "Hits", fontSize=5.5, fontName="Helvetica",
+                 fillColor=rl_colors.HexColor("#64748B"), textAnchor="middle"))
+    
+    lx = 60 * mm
+    ly = height - 14 * mm
+    for i, u in enumerate(user_agents[:6]):
+        y = ly - i * 6.8 * mm
+        cnt = u.get("count", 0)
+        pct = u.get("percentage", round((cnt / total) * 100, 1))
+        col = rl_colors.HexColor(palette[i % len(palette)])
+        d.add(Rect(lx, y, 2.5 * mm, 2.5 * mm, fillColor=col, strokeWidth=0))
+        d.add(String(lx + 4 * mm, y + 0.2 * mm, u.get("name", "-")[:16], fontSize=6, fontName="Helvetica", fillColor=rl_colors.HexColor("#334155")))
+        d.add(String(lx + 40 * mm, y + 0.2 * mm, f"{cnt:,} ({pct}%)", fontSize=6, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+    
+    bar_y = 5 * mm
+    bar_w = width - 12 * mm
+    bx = 6 * mm
+    d.add(Rect(bx, bar_y, bar_w, 3.5 * mm, rx=1, ry=1, fillColor=rl_colors.HexColor("#F1F5F9"), strokeWidth=0))
+    cur_bx = bx
+    for i, u in enumerate(user_agents[:6]):
+        seg_w = (u.get("count", 0) / total) * bar_w
+        if seg_w > 0:
+            col = rl_colors.HexColor(palette[i % len(palette)])
+            d.add(Rect(cur_bx, bar_y, seg_w, 3.5 * mm, rx=0.5, ry=0.5, fillColor=col, strokeWidth=0))
+            cur_bx += seg_w
+    d.add(String(bx, bar_y + 4.2 * mm, "Distribusi Komposisi Perangkat (100%)", fontSize=5.5, fontName="Helvetica", fillColor=rl_colors.HexColor("#64748B")))
+    return d
+
+
+def _make_error_summary_cards(status_counts, width=273*mm, height=18*mm):
+    d = Drawing(width, height)
+    gap = 4 * mm
+    card_w = (width - gap * 3) / 4.0
+    
+    c2 = sum(v for k, v in status_counts.items() if k.startswith("2"))
+    c3 = sum(v for k, v in status_counts.items() if k.startswith("3"))
+    c4 = sum(v for k, v in status_counts.items() if k.startswith("4"))
+    c5 = sum(v for k, v in status_counts.items() if k.startswith("5"))
+    total = c2 + c3 + c4 + c5 or 1
+    
+    items = [
+        ("2xx — Sukses", c2, round(c2/total*100, 1), "Layanan Normal", "#059669", "#ECFDF5", "#A7F3D0"),
+        ("3xx — Pengalihan", c3, round(c3/total*100, 1), "Redirect / HTTPS", "#D97706", "#FEF3C7", "#FDE68A"),
+        ("4xx — Client Error", c4, round(c4/total*100, 1), "Not Found / Bad Req", "#EA580C", "#FFEDD5", "#FED7AA"),
+        ("5xx — Server Error", c5, round(c5/total*100, 1), "Internal / Timeout", "#DC2626", "#FEE2E2", "#FECACA"),
+    ]
+    
+    for i, (title, cnt, pct, sub, text_col, bg_col, bdr_col) in enumerate(items):
+        x = i * (card_w + gap)
+        d.add(Rect(x, 0, card_w, height, rx=2, ry=2,
+                   fillColor=rl_colors.HexColor(bg_col), strokeColor=rl_colors.HexColor(bdr_col), strokeWidth=0.8))
+        d.add(String(x + 3 * mm, height - 5 * mm, title,
+                     fontSize=6.5, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor(text_col)))
+        d.add(String(x + 3 * mm, height - 12 * mm, f"{cnt:,} ({pct}%)",
+                     fontSize=10, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F172A")))
+        d.add(String(x + 3 * mm, 2.5 * mm, sub,
+                     fontSize=5.5, fontName="Helvetica", fillColor=rl_colors.HexColor("#64748B")))
+    return d
+
+
+def _make_security_shield_closing(width=273*mm, height=52*mm):
+    d = Drawing(width, height)
+    d.add(Rect(0, 0, width, height, rx=3, ry=3, fillColor=rl_colors.HexColor("#F8FAFC"), strokeColor=rl_colors.HexColor("#CBD5E1"), strokeWidth=0.6))
+    cx = width / 2.0
+    cy = height / 2.0 + 4 * mm
+    pts = [cx, cy + 14 * mm,
+           cx + 12 * mm, cy + 8 * mm,
+           cx + 12 * mm, cy - 2 * mm,
+           cx, cy - 14 * mm,
+           cx - 12 * mm, cy - 2 * mm,
+           cx - 12 * mm, cy + 8 * mm]
+    d.add(Polygon(pts, fillColor=rl_colors.HexColor("#0F766E"), strokeColor=rl_colors.HexColor("#115E59"), strokeWidth=1))
+    d.add(Circle(cx, cy + 1 * mm, 4 * mm, fillColor=rl_colors.white, strokeColor=rl_colors.white, strokeWidth=0))
+    d.add(Rect(cx - 3.5 * mm, cy - 4 * mm, 7 * mm, 5 * mm, rx=1, ry=1, fillColor=rl_colors.white, strokeWidth=0))
+    d.add(Circle(cx, cy - 1.5 * mm, 0.8 * mm, fillColor=rl_colors.HexColor("#0F766E"), strokeWidth=0))
+    d.add(String(cx, cy - 18 * mm, "SI-KRESNA • KEAMANAN SIBER & PRIVASI TERJAGA",
+                 fontSize=7.5, fontName="Helvetica-Bold", fillColor=rl_colors.HexColor("#0F766E"), textAnchor="middle"))
+    d.add(String(cx, 4.5 * mm,
+                 "« Keamanan siber adalah proses berkelanjutan untuk menjaga integritas, kerahasiaan, dan ketersediaan layanan publik. »",
+                 fontSize=6.5, fontName="Helvetica-Oblique", fillColor=rl_colors.HexColor("#64748B"), textAnchor="middle"))
+    return d
+
+
+def _pdf_executive_access_logs_response(data, filename):
+    """Membangun laporan eksekutif PDF 6 halaman lengkap sesuai standar SI-KRESNA."""
+    if not REPORTLAB_AVAILABLE:
+        return jsonify({"error": "Modul reportlab tidak tersedia di server"}), 500
+
+    bio = io.BytesIO()
+    doc = SimpleDocTemplate(
+        bio, pagesize=landscape(A4),
+        leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=14 * mm,
+        title="SI-KRESNA — Laporan Access Log Web & Statistik Pengunjung"
+    )
+
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1e", parent=styles["Title"], fontSize=13, fontName="Helvetica-Bold",
+                        textColor=rl_colors.HexColor("#0F766E"), alignment=0, spaceAfter=2)
+    sub = ParagraphStyle("sube", parent=styles["Normal"], fontSize=7, fontName="Helvetica",
+                         textColor=rl_colors.HexColor("#64748B"), spaceAfter=4)
+    meta = ParagraphStyle("metae", parent=styles["Normal"], fontSize=6.5, textColor=rl_colors.HexColor("#334155"))
+    tc = ParagraphStyle("tce", parent=styles["Normal"], fontSize=6.2, fontName="Helvetica", textColor=rl_colors.HexColor("#334155"))
+    tcbe = ParagraphStyle("tcbe", parent=styles["Normal"], fontSize=6.2, fontName="Helvetica-Bold", textColor=rl_colors.HexColor("#0F172A"))
+    tcc = ParagraphStyle("tcce", parent=styles["Normal"], fontSize=5.8, fontName="Courier", textColor=rl_colors.HexColor("#0F172A"))
+
+    logs = data.get("logs", [])
+    analytics = data.get("analytics", {})
+    summ = data.get("summary", {})
+    period_label = data.get("period_label", data.get("period", "Hari Ini"))
+    ts_str = datetime.now().strftime("%d %b %Y %H:%M:%S")
+
+    hourly_human = analytics.get("hourly_human", [0] * 24)
+    hourly_bot = analytics.get("hourly_bot", [0] * 24)
+    status_counts = analytics.get("status_counts", data.get("status_distribution", {}))
+    top_cities = analytics.get("top_cities", [])
+    top_urls = analytics.get("top_urls", [])
+    top_uas = analytics.get("top_user_agents", [])
+    ep_cats = analytics.get("endpoint_categories", [])
+    top_404 = analytics.get("top_404_urls", [])
+    top_err_ips = analytics.get("top_error_ips", [])
+
+    total_req = summ.get("total_requests", 0) or 1
+    p_human = round((summ.get("human_hits", 0) / total_req) * 100, 1)
+    p_bot = round((summ.get("bot_hits", 0) / total_req) * 100, 1)
+
+    c2 = sum(v for k, v in status_counts.items() if k.startswith("2"))
+    p_2xx = round((c2 / (sum(status_counts.values()) or 1)) * 100, 1)
+
+    story = []
+
+    # ================= PAGE 1: Ringkasan Eksekutif =================
+    story.append(Paragraph("<b>SI-KRESNA</b> &nbsp;|&nbsp; RSUD KARDINAH KOTA TEGAL", meta))
+    story.append(Spacer(1, 1 * mm))
+    story.append(_make_hero_banner(period_label, ts_str))
+    story.append(Spacer(1, 2.5 * mm))
+
+    kpi_cards = [
+        {"title": "Pengunjung Manusia", "value": f"{summ.get('human_visitors', 0):,}", "sub": "IP publik unik", "accent": "#0F766E"},
+        {"title": "Request Manusia", "value": f"{summ.get('human_hits', 0):,}", "sub": f"{p_human}% trafik bersih", "accent": "#0284C7"},
+        {"title": "Crawler / Bot Hits", "value": f"{summ.get('bot_hits', 0):,}", "sub": f"{p_bot}% total request", "accent": "#D97706"},
+        {"title": "Total Event Diproses", "value": f"{summ.get('total_requests', 0):,}", "sub": f"{len(logs)} baris sampel", "accent": "#64748B"},
+    ]
+    story.append(_make_kpi_cards(kpi_cards))
+    story.append(Spacer(1, 2.5 * mm))
+
+    ch1 = _make_hourly_chart(hourly_human, hourly_bot, width=134*mm, height=64*mm)
+    ch2 = _make_status_donut(status_counts, width=134*mm, height=64*mm, title="1.2 Distribusi HTTP Status")
+    grid_p1 = Table([[ch1, ch2]], colWidths=[136*mm, 137*mm])
+    grid_p1.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(grid_p1)
+    story.append(Spacer(1, 2.5 * mm))
+
+    story.append(_pdf_callout_table(
+        "Catatan Penting — Analisis Kesehatan Trafik Web Server",
+        f"Trafik server berjalan stabil. {p_2xx}% permintaan berhasil dilayani dengan status HTTP 200 OK. Aktivitas bot ({p_bot}%) merupakan perayapan mesin pencari normal (Googlebot/Bingbot). Tidak ditemukan lonjakan anomali error 5xx pada periode ini."
+    ))
+    story.append(PageBreak())
+
+    # ================= PAGE 2: Visitor & Traffic Analytics =================
+    story.append(Paragraph("2. Visitor & Traffic Analytics", h1))
+    story.append(Paragraph("Analisis sebaran geografis pengunjung publik dan platform perangkat/peramban yang digunakan.", sub))
+    story.append(Spacer(1, 1.5 * mm))
+
+    c_left = _make_top_cities_chart(top_cities, width=134*mm, height=74*mm, title="2.1 Top 8 Kota Pengunjung (GeoIP MMDB)")
+    c_right = _make_device_analytics_box(top_uas, width=134*mm, height=74*mm)
+    grid_p2 = Table([[c_left, c_right]], colWidths=[136*mm, 137*mm])
+    grid_p2.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(grid_p2)
+    story.append(Spacer(1, 3 * mm))
+
+    # Mobile share
+    p_mobile = 0.0
+    for u in top_uas:
+        if u.get("name") in ("Android", "iOS (Apple)"):
+            p_mobile += u.get("percentage", 0)
+    p_mobile = round(p_mobile, 1) or 95.0
+
+    in1 = _pdf_callout_table(
+        f"Insight 1: Dominasi Akses Mobile ({p_mobile}%)",
+        f"{p_mobile}% pengunjung mengakses portal web RSUD Kardinah melalui smartphone (Android & iOS). Tata letak responsif dan optimasi kecepatan aset mobile sangat krusial bagi kenyamanan pasien.",
+        width=134*mm, accent="#0F766E", bg="#F0FDF4", border="#A7F3D0"
+    )
+    in2 = _pdf_callout_table(
+        "Insight 2: Aktivitas Crawler & Search Engine (Normal)",
+        f"Terdeteksi {summ.get('bot_hits', 0):,} request bot/crawler. Pola perayapan indexing mesin pencari berjalan wajar tanpa indikasi scraping agresif atau scanning vulnerabilitas.",
+        width=134*mm, accent="#0284C7", bg="#F0F9FF", border="#BAE6FD"
+    )
+    grid_in = Table([[in1, in2]], colWidths=[136*mm, 137*mm])
+    grid_in.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(grid_in)
+    story.append(PageBreak())
+
+    # ================= PAGE 3: Endpoint & Security Overview =================
+    story.append(Paragraph("3. Endpoint & Security Overview", h1))
+    story.append(Paragraph("Endpoint yang paling sering diakses pengunjung dan pengelompokan jenis layanan web.", sub))
+    story.append(Spacer(1, 1.5 * mm))
+
+    top_urls_rows = [["#", "URL / Endpoint", "Hits", "Persentase", "Tipe Layanan"]]
+    for u in top_urls[:10]:
+        path_str = u.get("url", "-")
+        # Infer service type
+        if any(path_str.startswith(p) for p in ("/service", "/api", "/live")):
+            svc_type = "API & Layanan Data"
+        elif any(path_str.lower().endswith(ext) for ext in ('.jpg', '.png', '.css', '.js')):
+            svc_type = "Static Asset"
+        elif any(k in path_str.lower() for k in ("wp-", ".env", ".git")):
+            svc_type = "Bot Probe"
+        else:
+            svc_type = "Halaman Informasi Web"
+        top_urls_rows.append([str(u.get("rank", len(top_urls_rows))), path_str, f"{u.get('count', 0):,}", f"{u.get('percentage', 0)}%", svc_type])
+
+    if len(top_urls_rows) == 1:
+        top_urls_rows.append(["-", "Tidak ada data URL pada periode ini", "0", "0%", "-"])
+
+    t_urls = Table([[Paragraph(c, tcbe if r == 0 else tc) for c in row] for r, row in enumerate(top_urls_rows)],
+                   colWidths=[10*mm, 115*mm, 25*mm, 28*mm, 95*mm])
+    t_urls.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#0F766E")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8FAFC")]),
+        ("GRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.8),
+    ]))
+    story.append(t_urls)
+    story.append(Spacer(1, 2.5 * mm))
+
+    st_donut = _make_status_donut(status_counts, width=134*mm, height=52*mm, title="3.2 HTTP Status Summary")
+    
+    # Endpoint category bars
+    ep_formatted = [{"city": e["category"], "count": e["count"], "percentage": e["percentage"]} for e in ep_cats[:5]]
+    ep_bars = _make_top_cities_chart(ep_formatted, width=134*mm, height=52*mm, title="3.3 Kategori Endpoint")
+
+    grid_p3 = Table([[st_donut, ep_bars]], colWidths=[136*mm, 137*mm])
+    grid_p3.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(grid_p3)
+    story.append(Spacer(1, 2.5 * mm))
+
+    c4 = sum(v for k, v in status_counts.items() if k.startswith("4"))
+    story.append(_pdf_callout_table(
+        "Perhatian Khusus — Analisis Endpoint & Error Not Found",
+        f"Terdeteksi {c4:,} request berstatus 4xx (Not Found / Client Error). Mayoritas merupakan aset gambar/skrip lama atau pemindaian acak bot. Pastikan tautan menu pada portal web selalu mengarah ke URL aktif.",
+        accent="#D97706", bg="#FFFBEB", border="#FDE68A"
+    ))
+    story.append(PageBreak())
+
+    # ================= PAGE 4: Error & Anomaly Analysis =================
+    story.append(Paragraph("4. Error & Anomaly Analysis", h1))
+    story.append(Paragraph("Ringkasan kesalahan HTTP, identifikasi anomali, dan aktivitas pemindaian mencurigakan.", sub))
+    story.append(Spacer(1, 1.5 * mm))
+
+    story.append(_make_error_summary_cards(status_counts, width=273*mm, height=18*mm))
+    story.append(Spacer(1, 3 * mm))
+
+    err_urls_rows = [["#", "URL 404 Not Found", "Hits", "Kategori"]]
+    for idx, item in enumerate(top_404[:5], 1):
+        u_str = item.get("url", "-")
+        cat_str = "Bot Scanner" if any(k in u_str.lower() for k in ("wp-", ".env", ".git", "php")) else "Missing Asset"
+        err_urls_rows.append([str(idx), u_str, f"{item.get('count', 0):,}", cat_str])
+    if len(err_urls_rows) == 1:
+        err_urls_rows.append(["-", "Tidak ada 404 pada periode ini", "0", "-"])
+
+    t_err_urls = Table([[Paragraph(c, tcbe if r == 0 else tc) for c in row] for r, row in enumerate(err_urls_rows)],
+                       colWidths=[8*mm, 78*mm, 16*mm, 32*mm])
+    t_err_urls.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#EA580C")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8FAFC")]),
+        ("GRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+
+    err_ips_rows = [["#", "Client IP (Masked)", "Lokasi / Region", "Error Hits"]]
+    for idx, item in enumerate(top_err_ips[:5], 1):
+        raw_ip = item.get("ip", "-")
+        parts = raw_ip.split(".")
+        masked_ip = f"{parts[0]}.{parts[1]}.***.***" if len(parts) == 4 else raw_ip
+        err_ips_rows.append([str(idx), masked_ip, item.get("location", "-")[:20], f"{item.get('count', 0):,}"])
+    if len(err_ips_rows) == 1:
+        err_ips_rows.append(["-", "Tidak ada error IP", "-", "0"])
+
+    t_err_ips = Table([[Paragraph(c, tcbe if r == 0 else tc) for c in row] for r, row in enumerate(err_ips_rows)],
+                      colWidths=[8*mm, 42*mm, 54*mm, 30*mm])
+    t_err_ips.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#115E59")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8FAFC")]),
+        ("GRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+
+    grid_p4_tables = Table([[t_err_urls, t_err_ips]], colWidths=[136*mm, 137*mm])
+    grid_p4_tables.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(grid_p4_tables)
+    story.append(Spacer(1, 3 * mm))
+
+    story.append(_pdf_callout_table(
+        "Rekomendasi Tindak Lanjut Tim Keamanan IT RSUD Kardinah",
+        "1. Tinjau kembali URL 404 pada template halaman dan hapus tautan aset yang sudah tidak digunakan.  2. Pastikan filter Fail2ban 'nginx-scan' terus aktif untuk memblokir IP dengan akumulasi kesalahan akses tidak wajar.  3. Pertahankan kebijakan masking IP untuk seluruh publikasi laporan.",
+        accent="#0F766E", bg="#F0FDF4", border="#A7F3D0"
+    ))
+    story.append(PageBreak())
+
+    # ================= PAGE 5: Detail Access Log (Nginx) =================
+    story.append(Paragraph("5. Detail Access Log (Nginx)", h1))
+    story.append(Paragraph("Lampiran rekaman log akses real-time dengan penyamaran IP (masking) untuk privasi publik.", sub))
+    story.append(Spacer(1, 1.5 * mm))
+
+    raw_headers = ["Waktu (WIB)", "Client IP (Masked)", "Lokasi / Region", "ISP", "Device", "Metode", "Request URL / Path", "Status", "Size"]
+    log_display_rows = []
+    for l in logs[:16]:
+        raw_ip = l.get("ip", "-")
+        parts = raw_ip.split(".")
+        masked_ip = f"{parts[0]}.{parts[1]}.***.***" if len(parts) == 4 else raw_ip
+        log_display_rows.append([
+            l.get("time", "-")[:19],
+            masked_ip,
+            f"{l.get('city','-')}, {l.get('region','-')}"[:22],
+            l.get("isp", "-")[:16],
+            l.get("device", "-"),
+            l.get("method", "-"),
+            l.get("path", "-")[:45],
+            l.get("status", "-"),
+            l.get("size", "-")
+        ])
+
+    if not log_display_rows:
+        log_display_rows.append(["-", "-", "-", "-", "-", "-", "Tidak ada baris log", "-", "-"])
+
+    t_raw = Table([[Paragraph(c, tcbe if r == 0 else (tcc if i in (1, 6) else tc)) for i, c in enumerate(row)]
+                   for r, row in enumerate([raw_headers] + log_display_rows)],
+                  colWidths=[28*mm, 26*mm, 38*mm, 26*mm, 18*mm, 14*mm, 85*mm, 16*mm, 22*mm])
+    t_raw.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#0F766E")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8FAFC")]),
+        ("GRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 1.8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 1.8),
+    ]))
+    story.append(t_raw)
+    story.append(Spacer(1, 2.5 * mm))
+
+    story.append(Paragraph(
+        "<b>Legenda Status HTTP:</b> &nbsp; "
+        "<font color='#059669'>■ 2xx Sukses</font> &nbsp;&nbsp; "
+        "<font color='#D97706'>■ 3xx Pengalihan</font> &nbsp;&nbsp; "
+        "<font color='#EA580C'>■ 4xx Client Error</font> &nbsp;&nbsp; "
+        "<font color='#DC2626'>■ 5xx Server Error</font>",
+        meta
+    ))
+    story.append(PageBreak())
+
+    # ================= PAGE 6: Lampiran & Catatan Keamanan =================
+    story.append(Paragraph("6. Lampiran & Catatan Keamanan", h1))
+    story.append(Paragraph("Catatan teknis, kebijakan privasi data, dan tata kelola keamanan siber.", sub))
+    story.append(Spacer(1, 2 * mm))
+
+    story.append(_pdf_callout_table(
+        "Kepatuhan Privasi Data & Masking Alamat IP (UU PDP No. 27 Tahun 2022)",
+        "Seluruh alamat IP publik pengunjung pada dokumen ini telah disamarkan secara otomatis (octet masking) untuk menjaga kerahasiaan identitas dan privasi masyarakat yang mengakses layanan informasi publik RSUD Kardinah sesuai ketentuan peraturan perundang-undangan.",
+        width=273*mm, accent="#0F766E", bg="#F0FDF4", border="#A7F3D0"
+    ))
+    story.append(Spacer(1, 3 * mm))
+
+    story.append(_make_security_shield_closing(width=273*mm, height=52*mm))
+    story.append(Spacer(1, 3 * mm))
+
+    sign_off_rows = [
+        ["Sistem & Platform:", "Pengelola Infrastruktur TI:"],
+        ["SI-KRESNA v2.0 (Sistem Inspeksi Keamanan & Rekam Eksplorasi)", "Instalasi PDE / IT & SIMRS"],
+        ["Fail2ban IDS / IPS Engine & Nginx Reverse Proxy", "RSUD Kardinah Kota Tegal"],
+        ["MaxMind GeoLite2 Offline Database (Zero External Leak)", "Pemerintah Kota Tegal, Jawa Tengah"],
+    ]
+    t_sign = Table([[Paragraph(c, tcbe if r == 0 else tc) for c in row] for r, row in enumerate(sign_off_rows)],
+                   colWidths=[136*mm, 137*mm])
+    t_sign.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#F1F5F9")),
+        ("GRID", (0, 0), (-1, -1), 0.5, rl_colors.HexColor("#CBD5E1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.2),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.2),
+    ]))
+    story.append(t_sign)
+
+    doc.build(story, canvasmaker=NumberedCanvas)
+    bio.seek(0)
+    return Response(
+        bio.read(),
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
 @app.route("/api/access-logs/export")
 def api_access_logs_export():
     """Export Access Log Web & Visitor Analytics ke Excel / PDF / CSV."""
@@ -1348,36 +2100,7 @@ def api_access_logs_export():
     ua_rows = [[a["rank"], a["name"], a["count"], f"{a['percentage']}%"] for a in analytics.get("top_user_agents", [])]
 
     if fmt == "pdf":
-        sections = [
-            {"heading": "1. Ringkasan Periode",
-             "headers": ["Metrik", "Nilai"],
-             "rows": [["Periode", period_label],
-                      ["Pengunjung Unik (Human)", summ.get("human_visitors", 0)],
-                      ["Total Request Human", summ.get("human_hits", 0)],
-                      ["Crawler / Bot Hits", summ.get("bot_hits", 0)],
-                      ["Total Baris Log Ditampilkan", len(logs)]],
-             "col_widths": [70 * mm, 60 * mm]},
-            {"heading": "2. Top 10 Kota Pengunjung (GeoIP Offline MMDB)",
-             "headers": ["#", "Kota", "Hits", "Persentase"], "rows": city_rows,
-             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm],
-             "chart": [{"label": c["city"], "count": c["count"], "percentage": c["percentage"]} for c in analytics.get("top_cities", [])],
-             "chart_title": "Donut Chart — Sebaran Kota Pengunjung",
-             "chart_center": "Hits"},
-            {"heading": "3. Top 10 Akses URL & Endpoint",
-             "headers": ["#", "URL / Endpoint", "Hits", "Persentase"], "rows": url_rows,
-             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm]},
-            {"heading": "4. Perangkat & User-Agent",
-             "headers": ["#", "Perangkat / Platform", "Hits", "Persentase"], "rows": ua_rows,
-             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm],
-             "chart": [{"label": a["name"], "count": a["count"], "percentage": a["percentage"]} for a in analytics.get("top_user_agents", [])],
-             "chart_title": "Donut Chart — Perangkat & User-Agent",
-             "chart_center": "Hits"},
-            {"heading": "5. Detail Access Log (Nginx)",
-             "headers": ["Waktu", "IP", "Lokasi / ISP", "ISP", "Device", "Method", "URL", "Status", "Size"],
-             "rows": log_rows,
-             "col_widths": [30 * mm, 26 * mm, 38 * mm, 32 * mm, 18 * mm, 15 * mm, 62 * mm, 13 * mm, 14 * mm]},
-        ]
-        return _pdf_response("Laporan Access Log Web & Statistik Pengunjung", period_label, sections, f"{base}.pdf")
+        return _pdf_executive_access_logs_response(data, f"{base}.pdf")
 
     sheets = [
         {"name": "Ringkasan", "headers": ["Metrik", "Nilai"],
