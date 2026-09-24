@@ -225,14 +225,32 @@
           </div>
         </div>
 
-        <!-- Period Filter Buttons -->
-        <div class="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
-          <button onclick="setAccessPeriod('today')" id="access-period-today" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md bg-white text-slate-800 shadow-xs transition">Hari Ini</button>
-          <button onclick="setAccessPeriod('7d')" id="access-period-7d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">7 Hari</button>
-          <button onclick="setAccessPeriod('30d')" id="access-period-30d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">1 Bulan</button>
-          <button onclick="setAccessPeriod('90d')" id="access-period-90d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">3 Bulan</button>
-          <button onclick="setAccessPeriod('180d')" id="access-period-180d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">6 Bulan</button>
-          <button onclick="setAccessPeriod('365d')" id="access-period-365d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">1 Tahun</button>
+        <!-- Period Filter Buttons & Export -->
+        <div class="flex flex-wrap items-center gap-2">
+          <div class="flex flex-wrap items-center gap-1 bg-slate-100 p-1 rounded-lg border border-slate-200">
+            <button onclick="setAccessPeriod('today')" id="access-period-today" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md bg-white text-slate-800 shadow-xs transition">Hari Ini</button>
+            <button onclick="setAccessPeriod('7d')" id="access-period-7d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">7 Hari</button>
+            <button onclick="setAccessPeriod('30d')" id="access-period-30d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">1 Bulan</button>
+            <button onclick="setAccessPeriod('90d')" id="access-period-90d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">3 Bulan</button>
+            <button onclick="setAccessPeriod('180d')" id="access-period-180d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">6 Bulan</button>
+            <button onclick="setAccessPeriod('365d')" id="access-period-365d" class="access-period-btn px-2.5 py-1 text-xs font-semibold rounded-md text-slate-600 hover:text-slate-900 transition">1 Tahun</button>
+          </div>
+
+          <!-- Export Buttons -->
+          <div class="flex items-center gap-1.5">
+            <button onclick="exportAccessLogs('xlsx')" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-semibold shadow-2xs transition" title="Export Excel (.xlsx)">
+              <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+              Excel
+            </button>
+            <button onclick="exportAccessLogs('pdf')" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold shadow-2xs transition" title="Export PDF">
+              <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+              PDF
+            </button>
+            <button onclick="exportAccessLogs('csv')" class="inline-flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-2xs transition" title="Export CSV">
+              <i data-lucide="download" class="w-3.5 h-3.5"></i>
+              CSV
+            </button>
+          </div>
         </div>
       </div>
 
@@ -644,6 +662,14 @@
 
           <!-- Export action buttons -->
           <div class="flex items-center gap-1.5">
+            <button onclick="exportReport('xlsx')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-semibold shadow-xs transition" title="Export Excel (.xlsx)">
+              <i data-lucide="file-spreadsheet" class="w-3.5 h-3.5"></i>
+              Excel
+            </button>
+            <button onclick="exportReport('pdf')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg text-xs font-semibold shadow-xs transition" title="Export PDF">
+              <i data-lucide="file-text" class="w-3.5 h-3.5"></i>
+              PDF
+            </button>
             <button onclick="exportReportCSV('probes')" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 rounded-lg text-xs font-semibold shadow-xs transition" title="Export CSV Serangan Web">
               <i data-lucide="download" class="w-3.5 h-3.5 text-emerald-600"></i>
               CSV Serangan
@@ -870,6 +896,18 @@
 
     function exportReportCSV(type) {
       window.location.href = `/api/report/export-csv?type=${type}&period=${currentReportPeriod}`;
+    }
+
+    function exportReport(fmt) {
+      window.location.href = `/api/report/export?format=${fmt}&period=${currentReportPeriod}`;
+    }
+
+    function exportAccessLogs(fmt) {
+      const status = document.getElementById('filter-access-status')?.value || '';
+      const search = document.getElementById('filter-access-search')?.value || '';
+      const period = (typeof currentAccessPeriod !== 'undefined' && currentAccessPeriod) ? currentAccessPeriod : 'today';
+      const params = new URLSearchParams({ format: fmt, period: period, status: status, search: search });
+      window.location.href = `/api/access-logs/export?${params.toString()}`;
     }
 
     async function loadReport() {

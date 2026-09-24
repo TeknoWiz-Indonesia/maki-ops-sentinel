@@ -16,6 +16,25 @@ import math
 import urllib.request
 from flask import Flask, render_template, jsonify, request, Response
 
+# Optional export libs (Excel / PDF)
+try:
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    OPENPYXL_AVAILABLE = True
+except Exception:
+    OPENPYXL_AVAILABLE = False
+
+try:
+    from reportlab.lib import colors as rl_colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    REPORTLAB_AVAILABLE = True
+except Exception:
+    REPORTLAB_AVAILABLE = False
+
 app = Flask(__name__)
 
 # Base configuration
@@ -466,14 +485,8 @@ def api_summary():
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     })
 
-@app.route("/api/access-logs")
-def api_access_logs():
+def build_access_logs_payload(limit=100, status_filter="", ip_filter="", search_filter="", period="today"):
     """Live web access log view & Visitor Analytics dengan filter periode (today/7d/30d/90d/180d/365d) - Optimized."""
-    limit = int(request.args.get("limit", 100))
-    status_filter = request.args.get("status", "")
-    ip_filter = request.args.get("ip", "").strip()
-    search_filter = request.args.get("search", "").strip().lower()
-    period = request.args.get("period", "today").strip().lower()
     
     # Calculate cutoff datetime & set of allowed date strings for O(1) matching
     now = datetime.now()
@@ -710,13 +723,19 @@ def api_access_logs():
             "percentage": round((count / total_device_hits) * 100, 1)
         })
 
-    return jsonify({
+    return {
         "logs": parsed[:limit],
         "total_parsed": len(parsed),
         "status_distribution": dict(status_counts.most_common(6)),
         "top_ips": dict(ip_counts.most_common(5)),
         "period": period,
         "period_label": period_label,
+        "summary": {
+            "human_visitors": len(human_ips),
+            "human_hits": human_hits,
+            "bot_hits": bot_hits,
+            "total_requests": human_hits + bot_hits
+        },
         "analytics": {
             "human_visitors_today": len(human_ips),
             "human_hits_today": human_hits,
@@ -725,7 +744,17 @@ def api_access_logs():
             "top_urls": top_urls,
             "top_user_agents": top_user_agents
         }
-    })
+    }
+
+@app.route("/api/access-logs")
+def api_access_logs():
+    """Live web access log view & Visitor Analytics endpoint."""
+    limit = int(request.args.get("limit", 100))
+    status_filter = request.args.get("status", "")
+    ip_filter = request.args.get("ip", "").strip()
+    search_filter = request.args.get("search", "").strip().lower()
+    period = request.args.get("period", "today").strip().lower()
+    return jsonify(build_access_logs_payload(limit, status_filter, ip_filter, search_filter, period))
 
 @app.route("/api/banned-history")
 def api_banned_history():
@@ -1081,6 +1110,275 @@ def api_report_export_csv():
         )
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# ============================================================
+# EXPORT HELPERS & ENDPOINTS (Excel / PDF)
+# ============================================================
+
+BRAND_TITLE = "SI-KRESNA"
+BRAND_SUB = "Sistem Inspeksi Keamanan dan Rekam Eksplorasi Siber Jaringan Utama"
+BRAND_ORG = "RSUD Kardinah Kota Tegal"
+
+
+def _xlsx_sheet_from_rows(ws, headers, rows, col_widths=None):
+    """Tulis header + rows ke worksheet dengan styling konsisten."""
+    header_font = Font(bold=True, color="FFFFFF", size=10)
+    header_fill = PatternFill("solid", fgColor="0F766E")
+    thin = Side(style="thin", color="D1D5DB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.append(headers)
+    for c_idx, _ in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=c_idx)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = border
+    for r in rows:
+        ws.append(list(r))
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, max_col=len(headers)):
+        for cell in row:
+            cell.border = border
+            cell.alignment = Alignment(vertical="top", wrap_text=False)
+    if col_widths:
+        for i, w in enumerate(col_widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A2"
+
+
+def _xlsx_response(sheets, filename):
+    """sheets: list of dict(name, headers, rows, col_widths)"""
+    if not OPENPYXL_AVAILABLE:
+        return jsonify({"error": "Modul openpyxl tidak tersedia di server"}), 500
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for sh in sheets:
+        ws = wb.create_sheet(title=sh["name"][:31])
+        _xlsx_sheet_from_rows(ws, sh["headers"], sh["rows"], sh.get("col_widths"))
+    bio = io.BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+    return Response(
+        bio.read(),
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+def _pdf_table(headers, rows, col_widths=None):
+    style = TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#0F766E")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, 0), 7.5),
+        ("FONTSIZE", (0, 1), (-1, -1), 7),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("GRID", (0, 0), (-1, -1), 0.4, rl_colors.HexColor("#CBD5E1")),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8FAFC")]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ])
+    data = [headers] + [[str(x) for x in r] for r in rows]
+    t = Table(data, colWidths=col_widths, repeatRows=1)
+    t.setStyle(style)
+    return t
+
+
+def _pdf_response(title, period_label, sections, filename):
+    """sections: list of dict(heading, headers, rows, col_widths)"""
+    if not REPORTLAB_AVAILABLE:
+        return jsonify({"error": "Modul reportlab tidak tersedia di server"}), 500
+    bio = io.BytesIO()
+    doc = SimpleDocTemplate(
+        bio, pagesize=landscape(A4),
+        leftMargin=12 * mm, rightMargin=12 * mm, topMargin=12 * mm, bottomMargin=12 * mm,
+        title=f"{BRAND_TITLE} - {title}"
+    )
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1x", parent=styles["Title"], fontSize=15, textColor=rl_colors.HexColor("#0F766E"), spaceAfter=2)
+    h2 = ParagraphStyle("h2x", parent=styles["Heading2"], fontSize=10.5, textColor=rl_colors.HexColor("#0F172A"), spaceBefore=8, spaceAfter=4)
+    meta = ParagraphStyle("metax", parent=styles["Normal"], fontSize=8, textColor=rl_colors.HexColor("#475569"))
+
+    story = [
+        Paragraph(f"{BRAND_TITLE} — {title}", h1),
+        Paragraph(f"{BRAND_SUB}", meta),
+        Paragraph(f"{BRAND_ORG} &nbsp;|&nbsp; Periode: <b>{period_label}</b> &nbsp;|&nbsp; Dicetak: {datetime.now().strftime('%d %b %Y %H:%M:%S')} WIB", meta),
+        Spacer(1, 6),
+    ]
+    for sec in sections:
+        story.append(Paragraph(sec["heading"], h2))
+        if sec.get("rows"):
+            story.append(_pdf_table(sec["headers"], sec["rows"], sec.get("col_widths")))
+        else:
+            story.append(Paragraph("<i>Tidak ada data pada periode ini.</i>", meta))
+        story.append(Spacer(1, 6))
+    doc.build(story)
+    bio.seek(0)
+    return Response(
+        bio.read(),
+        mimetype="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+
+@app.route("/api/access-logs/export")
+def api_access_logs_export():
+    """Export Access Log Web & Visitor Analytics ke Excel / PDF / CSV."""
+    fmt = request.args.get("format", "xlsx").strip().lower()
+    period = request.args.get("period", "today").strip().lower()
+    status_filter = request.args.get("status", "")
+    ip_filter = request.args.get("ip", "").strip()
+    search_filter = request.args.get("search", "").strip().lower()
+    try:
+        export_limit = int(request.args.get("limit", 2000))
+    except Exception:
+        export_limit = 2000
+    export_limit = max(1, min(export_limit, 20000))
+
+    try:
+        data = build_access_logs_payload(export_limit, status_filter, ip_filter, search_filter, period)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    logs = data.get("logs", [])
+    analytics = data.get("analytics", {})
+    summ = data.get("summary", {})
+    period_label = data.get("period_label", period)
+    now = datetime.now()
+    stamp = now.strftime("%Y%m%d_%H%M%S")
+    base = f"sikresna_accesslog_{period}_{stamp}"
+
+    if fmt == "csv":
+        si = io.StringIO()
+        w = csv.writer(si)
+        w.writerow(["Waktu (WIB)", "Client IP", "Kota", "Region", "ISP", "Device", "Method", "Request URL", "Status", "Size", "User-Agent"])
+        for l in logs:
+            w.writerow([l.get("time"), l.get("ip"), l.get("city"), l.get("region"), l.get("isp"),
+                        l.get("device"), l.get("method"), l.get("path"), l.get("status"), l.get("size"), l.get("user_agent")])
+        return Response(si.getvalue(), mimetype="text/csv",
+                        headers={"Content-Disposition": f"attachment; filename={base}.csv"})
+
+    # Common row collections
+    log_rows = [[l.get("time"), l.get("ip"), f"{l.get('city','-')}, {l.get('region','-')}", l.get("isp", "-"),
+                 l.get("device"), l.get("method"), l.get("path"), l.get("status"), l.get("size")] for l in logs]
+    log_headers = ["Waktu (WIB)", "Client IP", "Lokasi / ISP", "ISP", "Device", "Method", "Request URL", "Status", "Size"]
+
+    city_rows = [[c["rank"], c["city"], c["count"], f"{c['percentage']}%"] for c in analytics.get("top_cities", [])]
+    url_rows = [[u["rank"], u["url"], u["count"], f"{u['percentage']}%"] for u in analytics.get("top_urls", [])]
+    ua_rows = [[a["rank"], a["name"], a["count"], f"{a['percentage']}%"] for a in analytics.get("top_user_agents", [])]
+
+    if fmt == "pdf":
+        sections = [
+            {"heading": "1. Ringkasan Periode",
+             "headers": ["Metrik", "Nilai"],
+             "rows": [["Periode", period_label],
+                      ["Pengunjung Unik (Human)", summ.get("human_visitors", 0)],
+                      ["Total Request Human", summ.get("human_hits", 0)],
+                      ["Crawler / Bot Hits", summ.get("bot_hits", 0)],
+                      ["Total Baris Log Ditampilkan", len(logs)]],
+             "col_widths": [70 * mm, 60 * mm]},
+            {"heading": "2. Top 10 Kota Pengunjung (GeoIP Offline MMDB)",
+             "headers": ["#", "Kota", "Hits", "Persentase"], "rows": city_rows,
+             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm]},
+            {"heading": "3. Top 10 Akses URL & Endpoint",
+             "headers": ["#", "URL / Endpoint", "Hits", "Persentase"], "rows": url_rows,
+             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm]},
+            {"heading": "4. Perangkat & User-Agent",
+             "headers": ["#", "Perangkat / Platform", "Hits", "Persentase"], "rows": ua_rows,
+             "col_widths": [12 * mm, 130 * mm, 25 * mm, 25 * mm]},
+            {"heading": "5. Detail Access Log (Nginx)",
+             "headers": ["Waktu", "IP", "Lokasi / ISP", "ISP", "Device", "Method", "URL", "Status", "Size"],
+             "rows": log_rows,
+             "col_widths": [30 * mm, 26 * mm, 38 * mm, 32 * mm, 18 * mm, 15 * mm, 62 * mm, 13 * mm, 14 * mm]},
+        ]
+        return _pdf_response("Laporan Access Log Web & Statistik Pengunjung", period_label, sections, f"{base}.pdf")
+
+    sheets = [
+        {"name": "Ringkasan", "headers": ["Metrik", "Nilai"],
+         "rows": [["Periode", period_label],
+                  ["Pengunjung Unik (Human)", summ.get("human_visitors", 0)],
+                  ["Total Request Human", summ.get("human_hits", 0)],
+                  ["Crawler / Bot Hits", summ.get("bot_hits", 0)],
+                  ["Total Baris Log", len(logs)]],
+         "col_widths": [38, 60]},
+        {"name": "Top Kota", "headers": ["#", "Kota", "Hits", "Persentase"], "rows": city_rows,
+         "col_widths": [6, 40, 12, 12]},
+        {"name": "Top URL", "headers": ["#", "URL / Endpoint", "Hits", "Persentase"], "rows": url_rows,
+         "col_widths": [6, 70, 12, 12]},
+        {"name": "Perangkat", "headers": ["#", "Perangkat / Platform", "Hits", "Persentase"], "rows": ua_rows,
+         "col_widths": [6, 40, 12, 12]},
+        {"name": "Access Log", "headers": log_headers, "rows": log_rows,
+         "col_widths": [22, 18, 32, 26, 14, 10, 60, 9, 11]},
+    ]
+    return _xlsx_response(sheets, f"{base}.xlsx")
+
+
+@app.route("/api/report/export")
+def api_report_export():
+    """Export Laporan Ringkasan Keamanan ke Excel / PDF."""
+    fmt = request.args.get("format", "xlsx").strip().lower()
+    period = request.args.get("period", "7d").strip().lower()
+    if period not in ["today", "7d", "30d", "all"]:
+        period = "7d"
+    try:
+        data = get_report_data(period)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    period_label = data.get("period_label", period)
+    summary = data.get("summary", {})
+    categories = data.get("categories", [])
+    attackers = data.get("top_attackers", [])
+    daily = data.get("daily_trend", [])
+    jails = data.get("jails", [])
+
+    now = datetime.now()
+    stamp = now.strftime("%Y%m%d_%H%M%S")
+    base = f"sikresna_report_{period}_{stamp}"
+
+    summary_rows = [
+        ["Total Deteksi Serangan Web (Probes)", summary.get("total_probes", 0)],
+        ["IP Penyerang Unik", summary.get("unique_probe_ips", 0)],
+        ["Total Ban", summary.get("total_bans", 0)],
+        ["Total Unban", summary.get("total_unbans", 0)],
+        ["IP Diblokir Unik", summary.get("unique_banned_ips", 0)],
+        ["Kategori Serangan Terbanyak", summary.get("top_category", "-")],
+    ]
+    cat_rows = [[c["category"], c["count"], f"{c['percentage']}%"] for c in categories]
+    atk_rows = [[i, a.get("ip_address"), a.get("hit_count"), a.get("categories"), a.get("last_seen"),
+                 "Ya" if a.get("is_whitelisted") else "Tidak"] for i, a in enumerate(attackers, 1)]
+    daily_rows = [[d["date"], d["probes"], d["bans"]] for d in daily]
+    jail_rows = [[j.get("jail"), j.get("bans", 0), j.get("unbans", 0)] for j in jails]
+
+    if fmt == "pdf":
+        sections = [
+            {"heading": "1. Ringkasan KPI Keamanan", "headers": ["Metrik", "Nilai"], "rows": summary_rows,
+             "col_widths": [90 * mm, 60 * mm]},
+            {"heading": "2. Distribusi Kategori Serangan", "headers": ["Kategori", "Jumlah", "Persentase"],
+             "rows": cat_rows, "col_widths": [110 * mm, 30 * mm, 30 * mm]},
+            {"heading": "3. Top 10 Penyerang", "headers": ["#", "IP Penyerang", "Hits", "Kategori", "Terakhir Terlihat", "Whitelist"],
+             "rows": atk_rows, "col_widths": [10 * mm, 40 * mm, 20 * mm, 70 * mm, 40 * mm, 22 * mm]},
+            {"heading": "4. Tren Harian", "headers": ["Tanggal", "Probes", "Bans"], "rows": daily_rows,
+             "col_widths": [50 * mm, 35 * mm, 35 * mm]},
+            {"heading": "5. Rekap Per Jail Fail2ban", "headers": ["Jail", "Bans", "Unbans"], "rows": jail_rows,
+             "col_widths": [60 * mm, 35 * mm, 35 * mm]},
+        ]
+        return _pdf_response("Laporan Ringkasan Keamanan", period_label, sections, f"{base}.pdf")
+
+    sheets = [
+        {"name": "Ringkasan", "headers": ["Metrik", "Nilai"], "rows": summary_rows, "col_widths": [45, 22]},
+        {"name": "Kategori Serangan", "headers": ["Kategori", "Jumlah", "Persentase"], "rows": cat_rows,
+         "col_widths": [38, 14, 14]},
+        {"name": "Top Penyerang", "headers": ["#", "IP Penyerang", "Hits", "Kategori", "Terakhir Terlihat", "Whitelist"],
+         "rows": atk_rows, "col_widths": [5, 20, 10, 40, 22, 11]},
+        {"name": "Tren Harian", "headers": ["Tanggal", "Probes", "Bans"], "rows": daily_rows, "col_widths": [15, 12, 12]},
+        {"name": "Jail Fail2ban", "headers": ["Jail", "Bans", "Unbans"], "rows": jail_rows, "col_widths": [24, 12, 12]},
+    ]
+    return _xlsx_response(sheets, f"{base}.xlsx")
+
 
 @app.route("/api/whitelist/add", methods=["POST"])
 def api_whitelist_add():
