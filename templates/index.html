@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SI-KRESNA — Sistem Inspeksi Keamanan & Rekam Eksplorasi Siber (RSUD Kardinah)</title>
+  <link rel="icon" type="image/png" href="/static/img/favicon.png">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -28,8 +29,8 @@
   <header class="border-b border-slate-200 bg-white/95 backdrop-blur-md sticky top-0 z-30 shadow-sm">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex items-center justify-between">
       <div class="flex items-center space-x-3">
-        <div class="h-10 w-10 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-center text-emerald-600 shadow-sm">
-          <i data-lucide="shield-check" class="w-5 h-5"></i>
+        <div class="h-11 w-11 rounded-xl bg-slate-900 border border-slate-700/80 flex items-center justify-center shadow-sm overflow-hidden p-1">
+          <img src="/static/img/logo_emblem.png" alt="SI-KRESNA Logo" class="w-full h-full object-contain">
         </div>
         <div>
           <h1 class="text-base font-bold tracking-tight text-slate-900 flex items-center gap-2">
@@ -832,8 +833,18 @@
 
   </main>
 
-  <footer class="border-t border-slate-200 bg-white py-3.5 text-center text-xs text-slate-500">
-    SI-KRESNA • Sistem Inspeksi Keamanan dan Rekam Eksplorasi Siber RSUD Kardinah Kota Tegal
+  <footer class="border-t border-slate-200 bg-white py-4 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <div class="flex items-center gap-2">
+        <img src="/static/img/logo_emblem.png" alt="SI-KRESNA" class="h-5 w-auto">
+        <span class="font-bold text-slate-700">SI-KRESNA</span>
+        <span class="text-slate-400">•</span>
+        <span>Sistem Inspeksi Keamanan & Rekam Eksplorasi Siber Jaringan Utama</span>
+      </div>
+      <div class="text-slate-400 text-[11px]">
+        RSUD Kardinah Kota Tegal • 172.16.62.181
+      </div>
+    </div>
   </footer>
 
   <script>
