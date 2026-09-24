@@ -16,6 +16,12 @@ import math
 import urllib.request
 from flask import Flask, render_template, jsonify, request, Response
 
+try:
+    from PIL import Image as PILImage, ImageDraw, ImageFont
+    PIL_AVAILABLE = True
+except Exception:
+    PIL_AVAILABLE = False
+
 # Optional export libs (Excel / PDF)
 try:
     import openpyxl
@@ -1451,10 +1457,71 @@ class NumberedCanvas(canvas.Canvas):
 
 
 def _make_hero_banner(period_label, timestamp_str, width=273*mm, height=26*mm):
+    bg_path = os.path.join(BASE_DIR, "static", "img", "hero_bg.png")
+    if not os.path.exists(bg_path):
+        bg_path = "/opt/fail2ban-dashboard/static/img/hero_bg.png"
     logo_path = os.path.join(BASE_DIR, "static", "img", "logo_emblem.png")
     if not os.path.exists(logo_path):
         logo_path = "/opt/fail2ban-dashboard/static/img/logo_emblem.png"
 
+    if PIL_AVAILABLE and os.path.exists(bg_path) and os.path.exists(logo_path):
+        try:
+            width_px, height_px = 2064, 196
+            resample = getattr(getattr(PILImage, 'Resampling', None), 'LANCZOS', getattr(PILImage, 'LANCZOS', 1))
+            bg = PILImage.open(bg_path)
+            bg_w, bg_h = bg.size
+            bg_resized = bg.resize((width_px, int(bg_h * (width_px / bg_w))), resample)
+            top = (bg_resized.size[1] - height_px) // 2
+            bg_cropped = bg_resized.crop((0, top, width_px, top + height_px)).convert('RGBA')
+
+            overlay = PILImage.new('RGBA', (width_px, height_px), (15, 118, 110, 185))
+            banner = PILImage.alpha_composite(bg_cropped, overlay)
+            draw = ImageDraw.Draw(banner)
+            draw.rectangle([(0, 0), (width_px - 1, height_px - 1)], outline=(45, 212, 191, 230), width=2)
+
+            logo = PILImage.open(logo_path).convert('RGBA')
+            logo_h = int(height_px * 0.78)
+            logo_w = int(logo.size[0] * (logo_h / logo.size[1]))
+            logo_resized = logo.resize((logo_w, logo_h), resample)
+            banner.alpha_composite(logo_resized, (35, (height_px - logo_h) // 2))
+
+            font_paths = [
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+            ]
+            try:
+                font_sub = ImageFont.truetype(font_paths[0], 20)
+                font_title = ImageFont.truetype(font_paths[0], 38)
+                font_desc = ImageFont.truetype(font_paths[1], 20)
+                font_badge_bold = ImageFont.truetype(font_paths[0], 20)
+                font_badge_norm = ImageFont.truetype(font_paths[1], 19)
+            except Exception:
+                font_sub = font_title = font_desc = font_badge_bold = font_badge_norm = ImageFont.load_default()
+
+            text_x = 35 + logo_w + 35
+            draw.text((text_x, 26), "SI-KRESNA  •  SISTEM INSPEKSI KEAMANAN SIBER", fill=(153, 246, 228, 255), font=font_sub)
+            draw.text((text_x, 60), "Laporan Access Log Web & Statistik Pengunjung", fill=(255, 255, 255, 255), font=font_title)
+            draw.text((text_x, 122), "Sistem Pemantauan Trafik, Analisis Perilaku Pengunjung, dan Deteksi Anomali Server", fill=(204, 251, 241, 255), font=font_desc)
+
+            badge_w = 400
+            badge_x = width_px - badge_w - 35
+            b_h = 58
+            draw.rounded_rectangle([(badge_x, 28), (badge_x + badge_w, 28 + b_h)], radius=8,
+                                   fill=(19, 78, 74, 235), outline=(45, 212, 191, 220), width=1)
+            draw.text((badge_x + 20, 28 + 16), f"Periode: {period_label}", fill=(255, 255, 255, 255), font=font_badge_bold)
+
+            draw.rounded_rectangle([(badge_x, 106), (badge_x + badge_w, 106 + b_h)], radius=8,
+                                   fill=(19, 78, 74, 235), outline=(45, 212, 191, 220), width=1)
+            draw.text((badge_x + 20, 106 + 17), f"Dicetak: {timestamp_str} WIB", fill=(204, 251, 241, 255), font=font_badge_norm)
+
+            bio = io.BytesIO()
+            banner.convert('RGB').save(bio, format='PNG')
+            bio.seek(0)
+            return RLImage(bio, width=width, height=height)
+        except Exception:
+            pass
+
+    # Fallback to Table layout
     styles = getSampleStyleSheet()
     t1 = ParagraphStyle("hb1", fontName="Helvetica-Bold", fontSize=6.5, textColor=rl_colors.HexColor("#99F6E4"), spaceAfter=1)
     t2 = ParagraphStyle("hb2", fontName="Helvetica-Bold", fontSize=12, textColor=rl_colors.white, spaceAfter=2)
@@ -1476,7 +1543,7 @@ def _make_hero_banner(period_label, timestamp_str, width=273*mm, height=26*mm):
     ]))
 
     center_flow = [
-        Paragraph("SI-KRESNA &nbsp;•&nbsp; SISTEM INSPEKSI KEAMANAN SIBER RSUD KARDINAH", t1),
+        Paragraph("SI-KRESNA &nbsp;•&nbsp; SISTEM INSPEKSI KEAMANAN SIBER", t1),
         Paragraph("Laporan Access Log Web &amp; Statistik Pengunjung", t2),
         Paragraph("Sistem Pemantauan Trafik, Analisis Perilaku Pengunjung, dan Deteksi Anomali Server", t3)
     ]
